@@ -31,3 +31,8 @@ zaloha/
 # OS specific files
 .DS_Store
 Thumbs.db
+
+# Local scripts and shortcuts
+start.bat
+auto_push.bat
+*.lnk
