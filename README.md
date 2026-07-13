@@ -55,19 +55,19 @@ A powerful, PyQt6-based desktop application that leverages Google's Gemini 2.5 A
    ```
 
 2. **Set your API Key:**
-   - Go to `Nástroje (Tools) -> Nastaviť API kľúč... (Set API Key...)` in the top menu bar.
+   - Go to `Tools -> Set API Key...` in the top menu bar.
    - Paste your Gemini API key. It will be encrypted and saved locally.
 
 3. **Configure Pricing (Optional):**
-   - Go to `Nástroje (Tools) -> Nastaviť sadzby (Pricing)...`.
+   - Go to `Tools -> Pricing...`.
    - Set the current API rates (in USD per 1M tokens/characters) for accurate cost tracking in the status bar.
 
 4. **Generate Audio:**
    - Paste your text into the main input area.
    - Select your preferred model, voice, and language.
-   - Click **✂ Rozdeliť text na segmenty (Split text into segments)**.
-   - Click **🚀 Generovať VŠETKY Segmenty (Generate ALL Segments)** or generate them one by one.
-   - Once all segments are generated, click **➕ Zlúčiť Segmenty (Merge Segments)** to create the final audio file.
+   - Click **✂ Split text into segments**.
+   - Click **🚀 Generate ALL Segments** or generate them one by one.
+   - Once all segments are generated, click **➕ Merge Segments** to create the final audio file.
    - Save the final output as a `.wav` file.
 
 ## 🔐 Security Note
