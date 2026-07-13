@@ -75,7 +75,9 @@ A powerful, PyQt6-based desktop application that leverages Google's Gemini 3.1 A
    - Save the final output as a `.wav` file.
    
 
-[sample.mp3](https://github.com/user-attachments/files/29966604/sample.mp3)
+
+https://github.com/user-attachments/assets/95824816-b98b-4b5b-88ed-411783ec3f86
+
 
 
 ## 🔐 Security Note
