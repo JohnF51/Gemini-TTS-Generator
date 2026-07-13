@@ -29,7 +29,7 @@ A powerful, PyQt6-based desktop application that leverages Google's Gemini 2.5 A
 
 1. **Clone the repository:**
    ```bash
-   git clone https://github.com/yourusername/Gemini-TTS-Generator.git
+   git clone https://github.com/JohnF51/Gemini-TTS-Generator.git
    cd Gemini-TTS-Generator
    ```
 
@@ -77,7 +77,7 @@ This application uses **Windows DPAPI (Data Protection API)** to encrypt your AP
 
 ## 🤝 Contributing
 
-Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/yourusername/Gemini-TTS-Generator/issues).
+Contributions, issues, and feature requests are welcome! Feel free to check the [issues page](https://github.com/JohnF51/Gemini-TTS-Generator/issues).
 
 ## 📝 License
 
