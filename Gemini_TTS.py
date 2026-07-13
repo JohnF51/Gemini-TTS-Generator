@@ -1771,7 +1771,7 @@ class TTS_App(QMainWindow):
         # Jazykové menu bolo odstránené
         
         self.help_menu = menu_bar.addMenu("Pomoc")
-        self.about_action = QAction("O programe", self); self.about_action.triggered.connect(lambda: QMessageBox.information(self, self.tr("O programe"), "Gemini TTS Generator: A demonstration of segmented text-to-speech conversion using the Google Gemini API.
+        self.about_action = QAction("O programe", self); self.about_action.triggered.connect(lambda: QMessageBox.information(self, self.tr("O programe"), "")); self.help_menu.addAction(self.about_action)
 
     def set_api_key_dialog(self):
         global GEMINI_API_KEY
