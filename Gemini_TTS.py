@@ -1227,6 +1227,9 @@ class TTS_App(QMainWindow):
         self.prompt_label.setText(self.tr("Prompt (EN):"))
         self.style_prompt_input.setPlaceholderText(self.tr("Vlastný 'Style Prompt' v angličtine..."))
         
+        self.speed_label.setText(self.tr("Rýchlosť Reči:") + f" {self.speed_slider.value()/100:.2f}x")
+        self.temp_label.setText(self.tr("Teplota:") + f" {self.temp_slider.value()/10:.1f}")
+        
         self.control_group.setTitle(self.tr("Ovládanie segmentácie a generovania"))
         self.use_full_text_checkbox.setText(self.tr("Použiť celý text ako jeden segment"))
         self.segment_count_label.setText(self.tr("Viet/Segment:") + f" {self.segment_count_slider.value()}")
