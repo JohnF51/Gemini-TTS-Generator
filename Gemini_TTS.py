@@ -8,28 +8,28 @@ import shutil
 import json
 import time
 import math
-# --- OPRAVA CHYBY: Inicializácia globálnej premennej pred try/except ---
+# --- BUG FIX: Initialize global variable before try/except ---
 _stanza_pipeline = None
 
-# Importy pre Sentence Splitting (Stanza)
+# Imports for Sentence Splitting (Stanza)
 try:
     import stanza
-    # Stanza sa bude inicializovať pri prvom volaní
+    # Stanza will be initialized on first call
 except ImportError:
-    print("Upozornenie: Knižnica 'stanza' nebola nájdená. Použije sa jednoduchá segmentácia viet. Pre CZ/SK odporúčame inštaláciu (pip install stanza).")
+    print("Warning: The 'stanza' library was not found. Simple sentence segmentation will be used. We recommend installing it (pip install stanza).")
     stanza = None
 
-# Import pre ukladanie do MP3 (pydub)
+# Import for MP3 saving (pydub)
 try:
     from pydub import AudioSegment
 except ImportError:
-    print("Upozornenie: Knižnica 'pydub' nebola nájdená. Ukladanie do MP3 nemusí fungovať. Pre ukladanie do MP3 odporúčame inštaláciu (pip install pydub).")
+    print("Warning: The 'pydub' library was not found. Saving to MP3 might not work. We recommend installing it (pip install pydub).")
     AudioSegment = None
 
 # --- NOVÝ IMPORT ---
 from threading import Thread
 
-# --- NOVÉ: Definovanie koreňového adresára a podadresárov aplikácie ---
+# --- NEW: Define application root and subdirectories ---
 APP_ROOT = os.path.dirname(os.path.abspath(__file__))
 PROJECTS_DIR = os.path.join(APP_ROOT, "project")
 TEMP_DIR = os.path.join(APP_ROOT, "temp")
@@ -44,7 +44,7 @@ class DATA_BLOB(ctypes.Structure):
                 ("pbData", ctypes.POINTER(ctypes.c_char))]
 
 def encrypt_api_key(data: str) -> str:
-    """Zašifruje text pomocou Windows DPAPI viazaného na používateľa."""
+    """Encrypts text using Windows DPAPI bound to the user."""
     try:
         crypt32 = ctypes.windll.crypt32
         data_bytes = data.encode('utf-8')
@@ -60,7 +60,7 @@ def encrypt_api_key(data: str) -> str:
         return ""
 
 def decrypt_api_key(enc_data_b64: str) -> str:
-    """Dešifruje text pomocou Windows DPAPI."""
+    """Decrypts text using Windows DPAPI."""
     try:
         crypt32 = ctypes.windll.crypt32
         enc_data = base64.b64decode(enc_data_b64)
@@ -75,10 +75,10 @@ def decrypt_api_key(enc_data_b64: str) -> str:
     except Exception:
         return ""
 
-# Globálna premenná pre API kľúč, načítava sa neskôr v TTS_App
+# Global variable for API key, loaded later in TTS_App
 GEMINI_API_KEY = ""
 
-# --- NOVÉ: Zabezpečenie existencie adresárov pri štarte ---
+# --- NEW: Ensure directories exist on startup ---
 os.makedirs(PROJECTS_DIR, exist_ok=True)
 os.makedirs(TEMP_DIR, exist_ok=True)
 os.makedirs(VOICES_DIR, exist_ok=True)
@@ -90,17 +90,132 @@ from PyQt6.QtGui import QPixmap, QImage, QAction, QColor, QIcon, QKeySequence
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 import wave
 
-
-
-
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QTextEdit, QPushButton, QComboBox, QLabel, QSlider, QGridLayout,
     QFileDialog, QMessageBox, QStatusBar, QGroupBox, QScrollArea, QSizePolicy,
-    QSplitter, QTabWidget, QMenu, QInputDialog, QCheckBox, QLineEdit
+    QSplitter, QTabWidget, QMenu, QInputDialog, QCheckBox, QLineEdit,
+    QDialog, QPlainTextEdit
 )
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, QObject, QUrl, QSize, QMutex, QWaitCondition
 from PyQt6.QtMultimedia import QMediaPlayer, QAudioOutput
+
+class LogStream(QObject):
+    new_text = pyqtSignal(str)
+
+    def __init__(self, original_stream=None):
+        super().__init__()
+        self.original_stream = original_stream
+        self.buffer = []
+
+    def write(self, text):
+        if self.original_stream:
+            self.original_stream.write(text)
+        self.buffer.append(text)
+        if len(self.buffer) > 10000:
+            self.buffer.pop(0)
+        self.new_text.emit(str(text))
+
+    def flush(self):
+        if self.original_stream:
+            self.original_stream.flush()
+            
+    def get_logs(self):
+        return "".join(self.buffer)
+
+# Global redirection streams
+LOG_STREAM = LogStream(sys.stdout)
+sys.stdout = LOG_STREAM
+
+LOG_STREAM_ERR = LogStream(sys.stderr)
+sys.stderr = LOG_STREAM_ERR
+
+
+class LogViewerDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Application Log Viewer")
+        self.resize(750, 500)
+        self.setMinimumSize(500, 350)
+        
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #2b2b2b;
+            }
+            QPlainTextEdit {
+                background-color: #1e1e1e;
+                color: #dcdcdc;
+                font-family: 'Consolas', 'Courier New', monospace;
+                font-size: 10pt;
+                border: 1px solid #4a4a4a;
+                border-radius: 4px;
+            }
+            QPushButton {
+                background-color: #4a4a4a;
+                color: #f0f0f0;
+                border: 1px solid #5a5a5a;
+                border-radius: 4px;
+                padding: 6px 12px;
+                font-size: 10pt;
+            }
+            QPushButton:hover {
+                background-color: #5a5a5a;
+                border: 1px solid #0095ff;
+            }
+            QCheckBox {
+                color: #f0f0f0;
+                font-size: 10pt;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        
+        self.log_display = QPlainTextEdit()
+        self.log_display.setReadOnly(True)
+        layout.addWidget(self.log_display)
+        
+        controls = QHBoxLayout()
+        self.auto_scroll_cb = QCheckBox("Auto-scroll")
+        self.auto_scroll_cb.setChecked(True)
+        
+        self.clear_btn = QPushButton("Clear")
+        self.clear_btn.clicked.connect(self.log_display.clear)
+        
+        self.save_btn = QPushButton("Save to File...")
+        self.save_btn.clicked.connect(self.save_log_to_file)
+        
+        self.close_btn = QPushButton("Close")
+        self.close_btn.clicked.connect(self.close)
+        
+        controls.addWidget(self.auto_scroll_cb)
+        controls.addStretch()
+        controls.addWidget(self.clear_btn)
+        controls.addWidget(self.save_btn)
+        controls.addWidget(self.close_btn)
+        
+        layout.addLayout(controls)
+
+        # Load existing logs
+        self.log_display.setPlainText(LOG_STREAM.get_logs())
+        
+        # Connect new text signals
+        LOG_STREAM.new_text.connect(self.append_log)
+        LOG_STREAM_ERR.new_text.connect(self.append_log)
+
+    def append_log(self, text):
+        self.log_display.insertPlainText(text)
+        if self.auto_scroll_cb.isChecked():
+            self.log_display.ensureCursorVisible()
+
+    def save_log_to_file(self):
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Log", "gemini_tts.log", "Log Files (*.log);;Text Files (*.txt)")
+        if file_path:
+            try:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    f.write(self.log_display.toPlainText())
+                QMessageBox.information(self, "Success", f"Log saved successfully to:\n{file_path}")
+            except Exception as e:
+                QMessageBox.critical(self, "Error", f"Could not save log file: {e}")
 
 # Importy pre Google Gemini
 from google import genai
@@ -137,7 +252,7 @@ MARKUP_TAGS = {
     },
 }
 
-# NOVÁ KONŠTANTA: Pre-definované Style Prompty (SK názov -> EN prompt)
+# NEW CONSTANT: Predefined Style Prompts (Name in UI -> EN prompt)
 STYLE_PROMPT_OPTIONS = {
     "Neutral / Default style": "",
     "Calm and Authoritative tone": "Speak in a calm and authoritative tone.",
@@ -150,7 +265,7 @@ STYLE_PROMPT_OPTIONS = {
 }
 
 
-# --- VYLEPŠENÉ: Rozšírený zoznam hlasov s informáciou o pohlaví ---
+# --- ENHANCED: Expanded list of voices with gender info ---
 GEMINI_VOICE_INFO = {
     "Achernar": "Female", "Achird": "Male", "Algenib": "Male", "Algieba": "Male",
     "Alnilam": "Male", "Aoede": "Female", "Autonoe": "Female", "Callirrhoe": "Female",
@@ -167,13 +282,13 @@ GEMINI_VOICES = list(GEMINI_VOICE_INFO.keys())
 # Dynamic voice preview will be cached per voice to avoid repeated API calls
 
 
-# NOVÁ KONŠTANTA: Dostupné TTS modely Gemini
+# NEW CONSTANT: Available Gemini TTS models
 GEMINI_TTS_MODELS = {
     "Gemini 2.5 Pro TTS (Highest quality, style control)": "gemini-2.5-pro-preview-tts",
     "Gemini 2.5 Flash TTS (Lower latency)": "gemini-2.5-flash-preview-tts"
 }
 
-# NOVÁ KONŠTANTA: Podporované jazyky (Názov v UI -> Kód pre API)
+# NEW CONSTANT: Supported languages (Name in UI -> Code for API)
 SUPPORTED_LANGUAGES = {
     "Slovak (SK)": "sk-SK",
     "Czech (CZ)": "cs-CZ",
@@ -184,18 +299,18 @@ SUPPORTED_LANGUAGES = {
     "French (FR)": "fr-FR",
 }
 
-# --- UPRAVENÝ Manažér dočasných súborov ---
+# --- MODIFIED Temporary File Manager ---
 class TempFileManager:
-    """Spravuje dočasný adresár /temp pre WAV a PNG súbory a zabezpečuje jeho vyčistenie."""
+    """Manages the temporary /temp directory for WAV and PNG files and handles its cleanup."""
     def __init__(self):
-        # --- ZMENA: Používa preddefinovaný adresár TEMP_DIR ---
+        # --- CHANGE: Uses predefined TEMP_DIR directory ---
         self.temp_dir = TEMP_DIR
-        print(f"Používa sa dočasný adresár: {self.temp_dir}")
-        self._temp_files = set() # Množina ciest k dočasným súborom
+        print(f"Using temporary directory: {self.temp_dir}")
+        self._temp_files = set() # Set of paths to temporary files
 
     def create_temp_file(self, suffix: str, data: bytes = None) -> str:
-        """Vytvorí dočasný súbor v spravovanom adresári a vráti jeho cestu."""
-        # Používame os.path.join pre multiplatformovú kompatibilitu
+        """Creates a temporary file in the managed directory and returns its path."""
+        # Using os.path.join for cross-platform compatibility
         temp_file_path = os.path.join(self.temp_dir, next(tempfile._get_candidate_names()) + suffix)
         if data:
             with open(temp_file_path, "wb") as f:
@@ -204,7 +319,7 @@ class TempFileManager:
         return temp_file_path
 
     def cleanup(self):
-        """Vymaže obsah dočasného adresára, ale adresár ponechá."""
+        """Deletes the contents of the temporary directory but keeps the directory itself."""
         try:
             if os.path.exists(self.temp_dir):
                 for filename in os.listdir(self.temp_dir):
@@ -215,11 +330,11 @@ class TempFileManager:
                         elif os.path.isdir(file_path):
                             shutil.rmtree(file_path)
                     except Exception as e:
-                        print(f"Chyba pri mazaní súboru {file_path}: {e}")
-                print(f"Obsah dočasného adresára zmazaný: {self.temp_dir}")
+                        print(f"Error deleting file {file_path}: {e}")
+                print(f"Temporary directory contents cleared: {self.temp_dir}")
             self._temp_files.clear()
         except Exception as e:
-            print(f"Chyba pri čistení dočasného adresára {self.temp_dir}: {e}")
+            print(f"Error clearing temporary directory {self.temp_dir}: {e}")
 
 # --- Pomocné funkcie pre konverziu audio dát z Gemini ---
 
@@ -285,13 +400,13 @@ def _init_stanza(lang: str = 'cs'):
 
     if stanza and _stanza_pipeline is None:
         try:
-            print(f"Kontrolujem/načítavam Stanza model pre '{lang}' do predvoleného adresára (iba tokenizácia)...")
+            print(f"Checking/loading Stanza model for '{lang}' to default directory (tokenization only)...")
             stanza.download(lang=lang, processors='tokenize', verbose=False)
             _stanza_pipeline = stanza.Pipeline(lang=lang, processors='tokenize', verbose=False)
-            print("Stanza pipeline úspešne inicializovaná.")
+            print("Stanza pipeline successfully initialized.")
 
         except Exception as e:
-            print(f"Chyba pri inicializácii Stanza pipeline pre '{lang}', prepínam na fallback: {e}")
+            print(f"Error initializing Stanza pipeline for '{lang}', switching to fallback: {e}")
             _stanza_pipeline = False
 
     if _stanza_pipeline is False:
@@ -300,7 +415,7 @@ def _init_stanza(lang: str = 'cs'):
     return _stanza_pipeline
 
 def _split_text_simple_fallback(text: str, sentences_per_segment: int = 3) -> list[str]:
-    """Záložná jednoduchá heuristika na rozdelenie viet."""
+    """Fallback simple heuristic to split sentences."""
     text = re.sub(r'([.!?])(?=\s*\S|$)', r'\1 ', text)
     sentences = re.split(r'(?<=[.!?])\s+', text)
     sentences = [s.strip() for s in sentences if s.strip()]
@@ -321,7 +436,7 @@ def _split_text_simple_fallback(text: str, sentences_per_segment: int = 3) -> li
 
 def _split_text_into_segments(text: str, sentences_per_segment: int = 3) -> list[str]:
     """
-    Rozdelí text na segmenty po N viet s použitím inteligentnejšej segmentácie (Stanza).
+    Splits text into segments of N sentences using smarter sentence segmentation (Stanza).
     """
     sentences = []
     stanza_pipe = _init_stanza('cs')
@@ -331,7 +446,7 @@ def _split_text_into_segments(text: str, sentences_per_segment: int = 3) -> list
             doc = stanza_pipe(text)
             sentences = [sentence.text.strip() for sentence in doc.sentences if sentence.text.strip()]
         except Exception as e:
-            print(f"Chyba pri spracovaní textu cez Stanza, prepínam na fallback: {e}")
+            print(f"Error processing text via Stanza, switching to fallback: {e}")
             return _split_text_simple_fallback(text, sentences_per_segment)
     else:
         return _split_text_simple_fallback(text, sentences_per_segment)
@@ -349,10 +464,10 @@ def _split_text_into_segments(text: str, sentences_per_segment: int = 3) -> list
 
     return [s.strip() for s in segments if s.strip()]
 
-# --- FUNKCIA PRE VIZUALIZÁCIU WAV ---
+# --- FUNCTION FOR WAV VISUALIZATION ---
 
 def create_waveform_png_data(audio_data: bytes, width: int = 400, height: int = 50) -> bytes:
-    """Vykreslí audio dáta (WAV) ako waveform a vráti surové PNG dáta."""
+    """Renders audio data (WAV) as a waveform and returns raw PNG bytes."""
 
     try:
         if not audio_data:
@@ -366,32 +481,32 @@ def create_waveform_png_data(audio_data: bytes, width: int = 400, height: int = 
             f_rate = raw.getframerate()
 
             if len(signal_array) == 0:
-                 # NOVÉ: Vykreslí prázdnu (tichú) stopu
+                 # NEW: Render empty (silent) track
                  fig = plt.figure(figsize=(width / 100, height / 100), dpi=100)
                  ax = fig.add_subplot(111)
                  ax.plot([0, 1], [0, 0], color='#0095ff', linewidth=0.5)
             else:
-                time_arr = np.linspace(0, len(signal_array) / f_rate, num=len(signal_array))
+                 time_arr = np.linspace(0, len(signal_array) / f_rate, num=len(signal_array))
 
-                # Matplotlib nastavenie pre kompaktné PNG
-                fig = plt.figure(figsize=(width / 100, height / 100), dpi=100)
-                ax = fig.add_subplot(111)
+                 # Matplotlib settings for compact PNG
+                 fig = plt.figure(figsize=(width / 100, height / 100), dpi=100)
+                 ax = fig.add_subplot(111)
 
-                # Zmena farby waveform pre tmavý režim
-                ax.plot(time_arr, signal_array, color='#0095ff', linewidth=0.5)
+                 # Change waveform color for dark mode
+                 ax.plot(time_arr, signal_array, color='#0095ff', linewidth=0.5)
 
             ax.set_xticks([])
             ax.set_yticks([])
             ax.axis('off')
             ax.margins(0,0)
 
-            # Nastavenie transparentného pozadia fig a ax
+            # Set transparent background for fig and ax
             fig.patch.set_alpha(0.0)
             ax.patch.set_alpha(0.0)
 
             plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
 
-            # Uloženie do pamäte (BytesIO)
+            # Save to memory (BytesIO)
             buf = io.BytesIO()
             fig.savefig(buf, format='png', transparent=True)
             buf.seek(0)
@@ -401,41 +516,50 @@ def create_waveform_png_data(audio_data: bytes, width: int = 400, height: int = 
             return buf.read()
 
     except Exception as e:
-        print(f"Chyba pri generovaní waveform: {e}")
+        print(f"Error generating waveform: {e}")
         return b''
 
-# ODSTRÁNENÝ WORKER: PreviewDownloader bol nahradený lokálnym prehrávaním ---
+# REMOVED WORKER: PreviewDownloader was replaced by local playback ---
 
-# --- Worker trieda pre Gemini ---
+# --- Worker class for Gemini ---
 
-class GeminiWorker: # <-- ZMENA: Už nededí od QObject
-    """Worker pre Gemini TTS (streamované audio), IBA Single-Speaker."""
+class GeminiWorker: # <-- CHANGE: No longer inherits from QObject
+    """Worker for Gemini TTS (streamed audio), ONLY Single-Speaker."""
     
-    def __init__(self, params, signals): # <-- ZMENA: Pridaný parameter 'signals'
+    def __init__(self, params, signals): # <-- CHANGE: Added 'signals' parameter
         super().__init__()
         self.params = params
-        self.signals = signals # <-- ZMENA: Uložíme si signály
+        self.signals = signals # <-- CHANGE: Store signals
         self.text = self.params["text"]
         self.prompt = self.params.get("prompt", "")
         self.voice_name = self.params.get("voice_name", "Zephyr")
         self.temperature = self.params.get("temperature", 1.0)
         self.model = self.params.get("model", "gemini-2.5-pro-preview-tts")
-        # NOVÉ: Načítanie jazyka a rýchlosti
+        # NEW: Load language and speed
         self.language_code = self.params.get("language_code", "sk-SK")
         self.speaking_rate = self.params.get("speaking_rate", 1.0)
         self.client = None
 
     def run(self):
         try:
-            # --- PRIDANÉ LOGOVANIE ---
-            print(f"\n[INFO] Spúšťam GeminiWorker pre text: '{self.text[:50]}...'")
-            print(f"[INFO] Použitý model: {self.model}, Hlas: {self.voice_name}, Jazyk: {self.language_code}")
-            print("---DEBUG: Krok 1 - Vytváram klienta...") # <-- PRIDANÝ RIADOK
+            # --- ADDED LOGGING ---
+            print(f"\n[INFO] Starting GeminiWorker for text: '{self.text[:50]}...'")
+            print(f"[INFO] Used model: {self.model}, Voice: {self.voice_name}, Language: {self.language_code}")
+            print("---DEBUG: Step 1 - Creating client...")
             
             client = genai.Client(api_key=GEMINI_API_KEY)
-            # --- PRIDANÉ LOGOVANIE ---
-            print("[INFO] Klient pre Gemini API bol úspešne inicializovaný.")
-            print("---DEBUG: Krok 2 - Klient vytvorený, pripravujem dáta...")
+            # --- ADDED LOGGING ---
+            print("[INFO] Client for Gemini API was successfully initialized.")
+            print("---DEBUG: Step 2 - Client created, preparing data...")
+            
+            # Detailed request logging
+            print(f"[API REQUEST] Sending TTS Request to model: '{self.model}'")
+            print(f"              Voice Name: '{self.voice_name}'")
+            print(f"              Language Code: '{self.language_code}'")
+            print(f"              Speaking Rate: {self.speaking_rate}x")
+            print(f"              Temperature: {self.temperature}")
+            print(f"              Style Prompt: '{self.prompt}'")
+            print(f"              Input Text Length: {len(self.text)} characters")
                         
             parts_list = []
             if self.prompt:
@@ -478,26 +602,21 @@ class GeminiWorker: # <-- ZMENA: Už nededí od QObject
             in_tokens = 0
             out_tokens = 0
 
-            # --- PRIDANÉ LOGOVANIE ---
-            print("[INFO] Odosielam požiadavku na Gemini API a čakám na streamované dáta...")
+            # --- ADDED LOGGING ---
+            print("[INFO] Sending request to Gemini API and waiting for streamed data...")
             start_time = time.time()
 
-            print("---DEBUG: Krok 3 - Pokúšam sa spojiť s API a streamovať dáta...") # <-- PRIDANÝ RIADOK
+            print("---DEBUG: Step 3 - Attempting to connect to API and stream data...")
+            chunk_count = 0
             for chunk in client.models.generate_content_stream(
                 model=self.model,
                 contents=contents,
                 config=generate_content_config,
                 #request_options=request_options
             ):
-                # --- PRIDANÉ LOGOVANIE ---
-                if not full_audio_data: # Vypíše sa len pri prvom prijatí dát
-                    first_chunk_time = time.time()
-                    print(f"[INFO] Prijatý prvý chunk dát po {first_chunk_time - start_time:.2f} sekundách.")
-
-                if hasattr(chunk, 'usage_metadata') and chunk.usage_metadata:
-                    in_tokens = getattr(chunk.usage_metadata, 'prompt_token_count', in_tokens) or in_tokens
-                    out_tokens = getattr(chunk.usage_metadata, 'candidates_token_count', out_tokens) or out_tokens
-
+                chunk_count += 1
+                chunk_size = 0
+                
                 if (
                     chunk.candidates
                     and chunk.candidates[0].content
@@ -506,26 +625,39 @@ class GeminiWorker: # <-- ZMENA: Už nededí od QObject
                     and chunk.candidates[0].content.parts[0].inline_data.data
                 ):
                     inline_data = chunk.candidates[0].content.parts[0].inline_data
+                    chunk_size = len(inline_data.data)
                     full_audio_data += inline_data.data
                     if not mime_type:
                         mime_type = inline_data.mime_type
 
-            # --- PRIDANÉ LOGOVANIE ---
+                # --- ADDED LOGGING ---
+                if not full_audio_data: # Printed only when first chunk is received
+                    first_chunk_time = time.time()
+                    print(f"[INFO] First chunk of data received after {first_chunk_time - start_time:.2f} seconds.")
+
+                print(f"[API RESPONSE] Received stream chunk #{chunk_count}: {chunk_size} bytes. (Total accumulated: {len(full_audio_data)} bytes)")
+
+                if hasattr(chunk, 'usage_metadata') and chunk.usage_metadata:
+                    in_tokens = getattr(chunk.usage_metadata, 'prompt_token_count', in_tokens) or in_tokens
+                    out_tokens = getattr(chunk.usage_metadata, 'candidates_token_count', out_tokens) or out_tokens
+
+            # --- ADDED LOGGING ---
             end_time = time.time()
-            print(f"[INFO] Streamovanie dokončené. Celkový čas: {end_time - start_time:.2f} sekúnd.")
-            print(f"[INFO] Celková veľkosť prijatých audio dát: {len(full_audio_data)} bajtov.")
+            print(f"[INFO] Streaming complete. Total time: {end_time - start_time:.2f} seconds.")
+            print(f"[INFO] Total size of received audio data: {len(full_audio_data)} bytes.")
+            print(f"[API INFO] Usage Metadata - Input tokens: {in_tokens}, Output tokens: {out_tokens}")
 
             if not full_audio_data:
-                 print("[ERROR] Generovanie nevrátilo žiadne audio dáta.")
-                 self.signals.error.emit(f"Generovanie Gemini TTS nevrátilo žiadne audio dáta. Použitý model: {self.model}") # <-- ZMENA
+                 print("[ERROR] Generation returned no audio data.")
+                 self.signals.error.emit(f"Gemini TTS generation returned no audio data. Model used: {self.model}")
                  return
 
             if not mime_type.lower().startswith("audio/wav"):
-                # --- PRIDANÉ LOGOVANIE ---
-                print(f"[INFO] Prijatý MIME typ '{mime_type}', konvertujem na WAV.")
+                # --- ADDED LOGGING ---
+                print(f"[INFO] Received MIME type '{mime_type}', converting to WAV.")
                 full_audio_data = convert_to_wav(full_audio_data, mime_type)
                 final_mime_type = "audio/wav"
-                print("[INFO] Konverzia na WAV dokončená.")
+                print("[INFO] Conversion to WAV complete.")
             else:
                 final_mime_type = mime_type
 
@@ -537,27 +669,27 @@ class GeminiWorker: # <-- ZMENA: Už nededí od QObject
                 "in_tokens": in_tokens,
                 "out_tokens": out_tokens
             }
-            # --- PRIDANÉ LOGOVANIE ---
-            print("[SUCCESS] Worker úspešne dokončil prácu.")
-            self.signals.finished.emit(result) # <-- ZMENA
+            # --- ADDED LOGGING ---
+            print("[SUCCESS] Worker successfully completed work.")
+            self.signals.finished.emit(result)
 
         except GeminiAPIError as e:
-             # --- PRIDANÉ LOGOVANIE ---
-             print(f"[FATAL ERROR] Chyba pri volaní Gemini API: {e}")
-             self.signals.error.emit(f"Chyba pri volaní Gemini API: {e}. Uistite sa, že kľúč je platný a povolenia sú aktívne.") # <-- ZMENA
+             # --- ADDED LOGGING ---
+             print(f"[FATAL ERROR] Error calling Gemini API: {e}")
+             self.signals.error.emit(f"Error calling Gemini API: {e}. Make sure the API key is valid and permissions are active.")
         except ValueError as e:
-            # --- PRIDANÉ LOGOVANIE ---
-            print(f"[FATAL ERROR] Chyba konfigurácie pre Gemini: {e}")
-            self.signals.error.emit(f"Chyba konfigurácie pre Gemini: {e}") # <-- ZMENA
+            # --- ADDED LOGGING ---
+            print(f"[FATAL ERROR] Gemini configuration error: {e}")
+            self.signals.error.emit(f"Gemini configuration error: {e}")
         except Exception as e:
-            # --- PRIDANÉ LOGOVANIE ---
-            print(f"[FATAL ERROR] Neznáma chyba v GeminiWorker: {e}")
-            self.signals.error.emit(f"Neznáma chyba (Gemini TTS): {e}") # <-- ZMENA
+            # --- ADDED LOGGING ---
+            print(f"[FATAL ERROR] Unknown error in GeminiWorker: {e}")
+            self.signals.error.emit(f"Unknown error (Gemini TTS): {e}")
 
-# --- Worker trieda pre DÁVKOVÚ GENERÁCIU ---
+# --- Worker class for BATCH GENERATION ---
 
 class SegmentBatchWorker(QObject):
-    """Worker, ktorý postupne generuje segmenty."""
+    """Worker that sequentially generates segments."""
 
     segment_generated = pyqtSignal(int, object)
     finished = pyqtSignal()
@@ -571,29 +703,43 @@ class SegmentBatchWorker(QObject):
         self.temperature = temperature
         self.model = model
         self.temp_file_manager = temp_file_manager
-        # NOVÉ: Uloženie jazyka a rýchlosti
+        # NEW: Store language and speed
         self.language_code = language_code
         self.speaking_rate = speaking_rate
         self._is_cancelled = False
 
     def cancel(self):
-        """Zruší aktuálnu dávkovú operáciu."""
+        """Cancels the current batch operation."""
         self._is_cancelled = True
 
     def run(self):
         try:
+            print("[INFO] Starting SegmentBatchWorker batch generation.")
             client = genai.Client(api_key=GEMINI_API_KEY)
-            i = -1 # Pre prípad chyby ešte pred slučkou
+            print("[INFO] Client for Gemini API was successfully initialized.")
+            i = -1 # For error handling before loop
 
             for i, segment_info in enumerate(self.segments_to_process):
                 if self._is_cancelled:
-                    self.status_update.emit(f"Dávkové generovanie zrušené užívateľom (Segment {i+1}/{len(self.segments_to_process)}).")
+                    self.status_update.emit(f"Batch generation canceled by user (Segment {i+1}/{len(self.segments_to_process)}).")
+                    print(f"[INFO] Batch generation canceled by user at segment {i+1}.")
                     break
                 
                 text = segment_info["text"]
-                voice_name = segment_info["voice"] # --- VYLEPŠENÉ: Hlas pre každý segment ---
+                voice_name = segment_info["voice"] # --- ENHANCED: Voice for each segment ---
 
-                self.status_update.emit(f"Generujem reč (Segment {i+1}/{len(self.segments_to_process)}), prosím čakajte...")
+                self.status_update.emit(f"Generating speech (Segment {i+1}/{len(self.segments_to_process)}), please wait...")
+                print(f"\n[INFO] Batch processing - Starting segment {i+1}/{len(self.segments_to_process)}")
+                
+                # Detailed request logging
+                print(f"[API REQUEST] Sending Batch TTS Request for segment {i+1}")
+                print(f"              Model: '{self.model}'")
+                print(f"              Voice Name: '{voice_name}'")
+                print(f"              Language Code: '{self.language_code}'")
+                print(f"              Speaking Rate: {self.speaking_rate}x")
+                print(f"              Temperature: {self.temperature}")
+                print(f"              Style Prompt: '{self.prompt}'")
+                print(f"              Input Text Length: {len(text)} characters")
 
                 parts_list = []
                 if self.prompt:
@@ -610,7 +756,7 @@ class SegmentBatchWorker(QObject):
 
                 voice_name = voice_name if voice_name in GEMINI_VOICES else "Algieba"
                 
-                # UPRAVENÉ: Pridanie jazyka a rýchlosti do konfigurácie
+                # MODIFIED: Added language and speed to the configuration
                 speech_config_params = {
                     "voice_config": types.VoiceConfig(
                         prebuilt_voice_config=types.PrebuiltVoiceConfig(
@@ -638,6 +784,10 @@ class SegmentBatchWorker(QObject):
                 in_tokens = 0
                 out_tokens = 0
 
+                print(f"[INFO] Sending request to Gemini API for segment {i+1}...")
+                start_time = time.time()
+                
+                chunk_count = 0
                 for chunk in client.models.generate_content_stream(
                     model=self.model,
                     contents=contents,
@@ -645,13 +795,12 @@ class SegmentBatchWorker(QObject):
                     #request_options=request_options
                 ):
                     if self._is_cancelled:
-                        self.status_update.emit(f"Dávkové generovanie zrušené (Segment {i+1}).")
+                        self.status_update.emit(f"Batch generation canceled (Segment {i+1}).")
+                        print(f"[INFO] Batch generation canceled at segment {i+1} mid-stream.")
                         return
 
-                    if hasattr(chunk, 'usage_metadata') and chunk.usage_metadata:
-                        in_tokens = getattr(chunk.usage_metadata, 'prompt_token_count', in_tokens) or in_tokens
-                        out_tokens = getattr(chunk.usage_metadata, 'candidates_token_count', out_tokens) or out_tokens
-
+                    chunk_count += 1
+                    chunk_size = 0
                     if (
                         chunk.candidates
                         and chunk.candidates[0].content
@@ -660,15 +809,33 @@ class SegmentBatchWorker(QObject):
                         and chunk.candidates[0].content.parts[0].inline_data.data
                     ):
                         inline_data = chunk.candidates[0].content.parts[0].inline_data
+                        chunk_size = len(inline_data.data)
                         full_audio_data += inline_data.data
                         if not mime_type:
                             mime_type = inline_data.mime_type
 
+                    if not full_audio_data: # Printed only when first chunk is received
+                        first_chunk_time = time.time()
+                        print(f"[INFO] First chunk of data received for segment {i+1} after {first_chunk_time - start_time:.2f} seconds.")
+
+                    print(f"[API RESPONSE] Segment {i+1} - Received stream chunk #{chunk_count}: {chunk_size} bytes. (Total accumulated: {len(full_audio_data)} bytes)")
+
+                    if hasattr(chunk, 'usage_metadata') and chunk.usage_metadata:
+                        in_tokens = getattr(chunk.usage_metadata, 'prompt_token_count', in_tokens) or in_tokens
+                        out_tokens = getattr(chunk.usage_metadata, 'candidates_token_count', out_tokens) or out_tokens
+
                 if not full_audio_data:
-                    raise Exception(f"Generovanie segmentu {i+1} nevrátilo žiadne audio dáta.")
+                    raise Exception(f"Generation of segment {i+1} returned no audio data.")
+
+                end_time = time.time()
+                print(f"[INFO] Segment {i+1} streaming complete. Total time: {end_time - start_time:.2f} seconds.")
+                print(f"[INFO] Segment {i+1} total audio size: {len(full_audio_data)} bytes.")
+                print(f"[API INFO] Segment {i+1} usage metadata - Input tokens: {in_tokens}, Output tokens: {out_tokens}")
 
                 if not mime_type.lower().startswith("audio/wav"):
+                    print(f"[INFO] Segment {i+1} received MIME type '{mime_type}', converting to WAV...")
                     audio_content = convert_to_wav(full_audio_data, mime_type)
+                    print(f"[INFO] Segment {i+1} conversion to WAV complete.")
                 else:
                     audio_content = full_audio_data
 
@@ -685,30 +852,32 @@ class SegmentBatchWorker(QObject):
                     "in_tokens": in_tokens,
                     "out_tokens": out_tokens
                 }
-                # Vrátime pôvodný index zo `segment_data`
+                # Return original index from `segment_data`
+                print(f"[SUCCESS] Segment {i+1} generation completed.")
                 self.segment_generated.emit(segment_info["original_index"], result)
 
 
             if not self._is_cancelled:
+                print("[SUCCESS] Batch generation finished successfully.")
                 self.finished.emit()
 
         except GeminiAPIError as e:
-             self.error.emit(f"Chyba pri volaní Gemini API v dávke: {e}.")
+             self.error.emit(f"Error calling Gemini API in batch: {e}.")
         except Exception as e:
             segment_num_str = f" (Segment {i+1})" if i != -1 else ""
-            self.error.emit(f"Neznáma chyba v dávkovom generovaní{segment_num_str}: {e}")
+            self.error.emit(f"Unknown error in batch generation{segment_num_str}: {e}")
 
-# --- NOVÁ POMOCNÁ TRIEDA PRE SIGNÁLY (bod 1) ---
+# --- NEW HELPER CLASS FOR SIGNALS ---
 class WorkerSignals(QObject):
     """
-    Definuje signály dostupné z 'robotníckeho' vlákna.
-    - finished: signál po úspešnom dokončení
-    - error: signál v prípade chyby
+    Defines signals available from the worker thread.
+    - finished: signal upon successful completion
+    - error: signal in case of error
     """
     finished = pyqtSignal(object)
     error = pyqtSignal(str)
 
-# --- NOVÁ TRIEDA PRE DYNAMICKÉ NAČÍTANIE MODELOV ---
+# --- NEW CLASS FOR DYNAMICALLY FETCHING MODELS ---
 class ModelFetchWorker(QObject):
     finished = pyqtSignal(dict)
     error = pyqtSignal(str)
@@ -716,255 +885,41 @@ class ModelFetchWorker(QObject):
     def run(self):
         try:
             if not GEMINI_API_KEY:
-                self.error.emit("Chýba API kľúč.")
+                self.error.emit("Missing API key.")
                 return
+            print("[INFO] ModelFetchWorker starting: requesting list of models from Gemini API...")
             client = genai.Client(api_key=GEMINI_API_KEY)
             tts_models = {}
-            # Prejdeme dostupné modely
+            # Iterate through available models
             for m in client.models.list():
                 name = m.name
-                # Modely pre prevod textu na reč obsahujú 'tts'
+                # TTS models contain 'tts'
                 if "tts" in name.lower():
                     display_name = getattr(m, 'display_name', None)
                     if not display_name:
-                        # Ak nie je display_name, použijeme aspoň formátovaný názov
+                        # If there is no display_name, use formatted name
                         display_name = name.replace("models/", "").replace("-", " ").title()
                     else:
-                        # Pridáme aj info o tom, či je to free/pay ak to z názvu nevyplýva priamo,
-                        # ale API to zatiaľ nevracia štandardizovane. Zobrazíme display_name.
                         pass
                     tts_models[display_name] = name.replace("models/", "")
             
             if tts_models:
+                print(f"[SUCCESS] ModelFetchWorker successfully loaded {len(tts_models)} TTS models from Gemini API: {list(tts_models.values())}")
                 self.finished.emit(tts_models)
             else:
-                self.error.emit("Žiadne TTS modely.")
+                print("[ERROR] ModelFetchWorker completed, but no TTS models were found in the Gemini response.")
+                self.error.emit("No TTS models found.")
         except Exception as e:
+            print(f"[ERROR] ModelFetchWorker failed to fetch models from Gemini API: {e}")
             self.error.emit(str(e))
 
-# --- NOVÉ: PREKLADY UI ---
-TRANSLATIONS = {
-    "sk": {},
-    "cz": {
-        "1. Vstup a Nastavenia": "1. Vstup a Nastavení",
-        "Hlavný textový vstup": "Hlavní textový vstup",
-        "Vložte sem váš text na prevod na reč...": "Vložte sem váš text pro převod na řeč...",
-        "Predvolené nastavenia generovania": "Výchozí nastavení generování",
-        "TTS Model:": "TTS Model:",
-        "Predvolený Hlas:": "Výchozí Hlas:",
-        "🔊 Ukážka": "🔊 Ukázka",
-        "Jazyk:": "Jazyk:",
-        "Štýl (predvoľba):": "Styl (předvolba):",
-        "Prompt (EN):": "Prompt (EN):",
-        "Vlastný 'Style Prompt' v angličtine...": "Vlastní 'Style Prompt' v angličtině...",
-        "Rýchlosť Reči:": "Rychlost Řeči:",
-        "Teplota:": "Teplota:",
-        "Ovládanie segmentácie a generovania": "Ovládání segmentace a generování",
-        "Použiť celý text ako jeden segment": "Použít celý text jako jeden segment",
-        "Viet/Segment:": "Vět/Segment:",
-        "✂ Rozdeliť text na segmenty": "✂ Rozdělit text na segmenty",
-        "🚀 Generovať VŠETKY Segmenty": "🚀 Generovat VŠECHNY Segmenty",
-        "2. Editor Segmentov": "2. Editor Segmentů",
-        "Segmenty": "Segmenty",
-        "➕ Vložiť Prázdny Segment": "➕ Vložit Prázdný Segment",
-        "3. Finálny Výstup": "3. Finální Výstup",
-        "Finálny výstup": "Finální výstup",
-        "Krivka: Zlúčte segmenty...": "Křivka: Slučte segmenty...",
-        "Krivka: Zlúčte segmenty pre zobrazenie celkovej waveform.": "Křivka: Slučte segmenty pro zobrazení celkové waveform.",
-        "➕ Zlúčiť Segmenty": "➕ Sloučit Segmenty",
-        "▶ Prehrať Celok": "▶ Přehrát Celek",
-        "💾 Uložiť WAV": "💾 Uložit WAV",
-        "◼ STOP": "◼ STOP",
-        "◼ Zastaviť Celok": "◼ Zastavit Celek",
-        "Aplikácia pripravená.": "Aplikace připravena.",
-        "Súbor": "Soubor",
-        "Nový Projekt": "Nový Projekt",
-        "Načítať Projekt...": "Načíst Projekt...",
-        "Uložiť Projekt...": "Uložit Projekt...",
-        "Uložiť Celý WAV...": "Uložit Celý WAV...",
-        "Ukončiť": "Ukončit",
-        "Nástroje": "Nástroje",
-        "Vyčistiť dočasné súbory": "Vyčistit dočasné soubory",
-        "Pomoc": "Nápověda",
-        "O programe": "O programu",
-        "Jazyk / Language": "Jazyk / Language",
-        "Slovenčina (SK)": "Slovenština (SK)",
-        "Čeština (CZ)": "Čeština (CZ)",
-        "Angličtina (EN)": "Angličtina (EN)",
-        "Krivka nevygenerovaná": "Křivka nevygenerována",
-        "Generuje sa...": "Generuje se...",
-        "Čaká sa...": "Čeká se...",
-        "Generovanie ZLYHALO.": "Generování SELHALO.",
-        "🏷️ Vložiť Tag": "🏷️ Vložit Tag",
-        "🔊 Generovať": "🔊 Generovat",
-        "▶ Prehrať": "▶ Přehrát",
-        "◼ Zastaviť": "◼ Zastavit",
-        "🔇 Ticho": "🔇 Ticho",
-        "🗑 Zmazať": "🗑 Smazat",
-        "⏳...": "⏳...",
-        "Zadajte prosím text na spracovanie.": "Zadejte prosím text ke zpracování.",
-        "Text nebolo možné spracovať na segmenty.": "Text nebylo možné zpracovat na segmenty.",
-        "Vytvorený 1 segment z celého textu.": "Vytvořen 1 segment z celého textu.",
-        "Text rozdelený na {0} segmentov.": "Text rozdělen na {0} segmentů.",
-        "Pridaný nový segment. Celkovo: {0}.": "Přidán nový segment. Celkovo: {0}.",
-        "Segment zmazaný. Ostáva {0} segmentov.": "Segment smazán. Zbývá {0} segmentů.",
-        "Nie všetky segmenty majú vygenerované audio.": "Ne všechny segmenty mají vygenerované audio.",
-        "Segmenty úspešne zlúčené!": "Segmenty úspěšně sloučeny!",
-        "Chyba pri zlúčení audio segmentov: {0}": "Chyba při sloučení audio segmentů: {0}",
-        "Žiadny zvuk na uloženie. Najprv zlúčte segmenty.": "Žádný zvuk k uložení. Nejprve slučte segmenty.",
-        "Prehrávanie zastavené.": "Přehrávání zastaveno.",
-        "Prehrávam finálny zvuk...": "Přehrávám finální zvuk...",
-        "Súbor úspešne uložený: {0}": "Soubor úspěšně uložen: {0}",
-        "Vytvorený nový projekt.": "Vytvořen nový projekt.",
-        "Projekt úspešne uložený do: {0}": "Projekt úspěšně uložen do: {0}",
-        "Projekt načítaný s {0} segmentmi.": "Projekt načten s {0} segmenty.",
-        "Projekt načítaný. Rozdeľte text na segmenty.": "Projekt načten. Rozdělte text na segmenty.",
-        "Aktuálne TTS modely úspešne načítané z Gemini API.": "Aktuální TTS modely úspěšně načteny z Gemini API.",
-        "Načítavam aktuálne modely z API...": "Načítám aktuální modely z API...",
-        "Nepodarilo sa načítať modely, použijú sa predvolené. ({0})": "Nepodařilo se načíst modely, použijí se výchozí. ({0})",
-        "Pre hlas '{0}' nebola nájdená cesta k ukážke.": "Pro hlas '{0}' nebyla nalezena cesta k ukázce.",
-        "Prehrávanie ukážky zastavené.": "Přehrávání ukázky zastaveno.",
-        "Súbor s ukážkou nebol nájdený na ceste:": "Soubor s ukázkou nebyl nalezen na cestě:",
-        "Prehrávam lokálnu ukážku hlasu: {0}...": "Přehrávám lokální ukázku hlasu: {0}...",
-        "Audio pre tento segment nebolo vygenerované.": "Audio pro tento segment nebylo vygenerováno.",
-        "Prehrávam segment {0}...": "Přehrávám segment {0}...",
-        "Gemini API kľúč nebol nájdený.": "Gemini API klíč nebyl nalezen.",
-        "Prebieha dávkové generovanie. Zrušte ho, ak chcete generovať iba jeden segment.": "Probíhá dávkové generování. Zrušte ho, pokud chcete generovat pouze jeden segment.",
-        "Segment neobsahuje text na generovanie.": "Segment neobsahuje text pro generování.",
-        "Generujem reč (Segment {0})...": "Generuji řeč (Segment {0})...",
-        "Segment {0} vygenerovaný.": "Segment {0} vygenerován.",
-        "Počas generovania segmentu {0} nastala chyba.": "Během generování segmentu {0} nastala chyba.",
-        "Chyba pri generovaní segmentu {0}:\n{1}": "Chyba při generování segmentu {0}:\n{1}",
-        "Prebieha generovanie jednotlivých segmentov. Dávkové generovanie nie je možné spustiť.": "Probíhá generování jednotlivých segmentů. Dávkové generování nelze spustit.",
-        "Všetky segmenty už majú vygenerované audio alebo sú prázdne.": "Všechny segmenty již mají vygenerované audio nebo jsou prázdné.",
-        "Spúšťam dávkové generovanie {0} segmentov...": "Spouštím dávkové generování {0} segmentů...",
-        "Ruším generovanie...": "Ruším generování...",
-        "Dávkové generovanie dokončené! Audio automaticky zlúčené.": "Dávkové generování dokončeno! Audio automaticky sloučeno.",
-        "Dávkové generovanie zrušené.": "Dávkové generování zrušeno.",
-        "Chyba dávkového generovania: {0}": "Chyba dávkového generování: {0}",
-        "Chyba: Dávkové generovanie zlyhalo.": "Chyba: Dávkové generování selhalo.",
-        "📝 Vytvoriť jeden segment": "📝 Vytvořit jeden segment",
-        "Zadajte dĺžku ticha v sekundách:": "Zadejte délku ticha v sekundách:",
-        "Vložiť Ticho": "Vložit Ticho",
-        "Do segmentu {0} vložené {1}s ticho.": "Do segmentu {0} vloženo {1}s ticho.",
-        "Chyba prehrávača: {0}": "Chyba přehrávače: {0}",
-        "Chyba prehrávača.": "Chyba přehrávače.",
-    },
-    "en": {
-        "1. Vstup a Nastavenia": "1. Input & Settings",
-        "Hlavný textový vstup": "Main Text Input",
-        "Vložte sem váš text na prevod na reč...": "Paste your text for text-to-speech here...",
-        "Predvolené nastavenia generovania": "Default Generation Settings",
-        "TTS Model:": "TTS Model:",
-        "Predvolený Hlas:": "Default Voice:",
-        "🔊 Ukážka": "🔊 Preview",
-        "Jazyk:": "Language:",
-        "Štýl (predvoľba):": "Style (preset):",
-        "Prompt (EN):": "Prompt (EN):",
-        "Vlastný 'Style Prompt' v angličtine...": "Custom 'Style Prompt' in English...",
-        "Rýchlosť Reči:": "Speech Rate:",
-        "Teplota:": "Temperature:",
-        "Ovládanie segmentácie a generovania": "Segmentation and Generation Control",
-        "Použiť celý text ako jeden segment": "Use full text as one segment",
-        "Viet/Segment:": "Sentences/Seg.:",
-        "✂ Rozdeliť text na segmenty": "✂ Split text into segments",
-        "🚀 Generovať VŠETKY Segmenty": "🚀 Generate ALL Segments",
-        "2. Editor Segmentov": "2. Segments Editor",
-        "Segmenty": "Segments",
-        "➕ Vložiť Prázdny Segment": "➕ Add Empty Segment",
-        "3. Finálny Výstup": "3. Final Output",
-        "Finálny výstup": "Final output",
-        "Krivka: Zlúčte segmenty...": "Waveform: Merge segments...",
-        "Krivka: Zlúčte segmenty pre zobrazenie celkovej waveform.": "Waveform: Merge segments to view full waveform.",
-        "➕ Zlúčiť Segmenty": "➕ Merge Segments",
-        "▶ Prehrať Celok": "▶ Play Full",
-        "💾 Uložiť WAV": "💾 Save WAV",
-        "◼ STOP": "◼ STOP",
-        "◼ Zastaviť Celok": "◼ Stop Full",
-        "Aplikácia pripravená.": "Application ready.",
-        "Súbor": "File",
-        "Nový Projekt": "New Project",
-        "Načítať Projekt...": "Load Project...",
-        "Uložiť Projekt...": "Save Project...",
-        "Uložiť Celý WAV...": "Save Full WAV...",
-        "Ukončiť": "Exit",
-        "Nástroje": "Tools",
-        "Vyčistiť dočasné súbory": "Clear temporary files",
-        "Pomoc": "Help",
-        "O programe": "About",
-        "Jazyk / Language": "Jazyk / Language",
-        "Slovenčina (SK)": "Slovak (SK)",
-        "Čeština (CZ)": "Czech (CZ)",
-        "Angličtina (EN)": "English (EN)",
-        "Krivka nevygenerovaná": "Waveform not generated",
-        "Generuje sa...": "Generating...",
-        "Čaká sa...": "Waiting...",
-        "Generovanie ZLYHALO.": "Generation FAILED.",
-        "🏷️ Vložiť Tag": "🏷️ Insert Tag",
-        "🔊 Generovať": "🔊 Generate",
-        "▶ Prehrať": "▶ Play",
-        "◼ Zastaviť": "◼ Stop",
-        "🔇 Ticho": "🔇 Silence",
-        "🗑 Zmazať": "🗑 Delete",
-        "⏳...": "⏳...",
-        "Zadajte prosím text na spracovanie.": "Please enter text to process.",
-        "Text nebolo možné spracovať na segmenty.": "Could not process text into segments.",
-        "Vytvorený 1 segment z celého textu.": "Created 1 segment from the full text.",
-        "Text rozdelený na {0} segmentov.": "Text split into {0} segments.",
-        "Pridaný nový segment. Celkovo: {0}.": "Added new segment. Total: {0}.",
-        "Segment zmazaný. Ostáva {0} segmentov.": "Segment deleted. {0} segments remaining.",
-        "Nie všetky segmenty majú vygenerované audio.": "Not all segments have generated audio.",
-        "Segmenty úspešne zlúčené!": "Segments merged successfully!",
-        "Chyba pri zlúčení audio segmentov: {0}": "Error merging audio segments: {0}",
-        "Žiadny zvuk na uloženie. Najprv zlúčte segmenty.": "No audio to save. Merge segments first.",
-        "Prehrávanie zastavené.": "Playback stopped.",
-        "Prehrávam finálny zvuk...": "Playing final audio...",
-        "Súbor úspešne uložený: {0}": "File saved successfully: {0}",
-        "Vytvorený nový projekt.": "New project created.",
-        "Projekt úspešne uložený do: {0}": "Project saved successfully to: {0}",
-        "Projekt načítaný s {0} segmentmi.": "Project loaded with {0} segments.",
-        "Projekt načítaný. Rozdeľte text na segmenty.": "Project loaded. Split text into segments.",
-        "Aktuálne TTS modely úspešne načítané z Gemini API.": "Current TTS models successfully loaded from Gemini API.",
-        "Načítavam aktuálne modely z API...": "Loading current models from API...",
-        "Nepodarilo sa načítať modely, použijú sa predvolené. ({0})": "Failed to load models, using defaults. ({0})",
-        "Pre hlas '{0}' nebola nájdená cesta k ukážke.": "Preview path not found for voice '{0}'.",
-        "Prehrávanie ukážky zastavené.": "Preview playback stopped.",
-        "Súbor s ukážkou nebol nájdený na ceste:": "Preview file not found at path:",
-        "Prehrávam lokálnu ukážku hlasu: {0}...": "Playing local voice preview: {0}...",
-        "Audio pre tento segment nebolo vygenerované.": "Audio for this segment has not been generated.",
-        "Prehrávam segment {0}...": "Playing segment {0}...",
-        "Gemini API kľúč nebol nájdený.": "Gemini API key not found.",
-        "Prebieha dávkové generovanie. Zrušte ho, ak chcete generovať iba jeden segment.": "Batch generation in progress. Cancel it to generate a single segment.",
-        "Segment neobsahuje text na generovanie.": "Segment contains no text to generate.",
-        "Generujem reč (Segment {0})...": "Generating speech (Segment {0})...",
-        "Segment {0} vygenerovaný.": "Segment {0} generated.",
-        "Počas generovania segmentu {0} nastala chyba.": "Error occurred during generation of segment {0}.",
-        "Chyba pri generovaní segmentu {0}:\n{1}": "Error generating segment {0}:\n{1}",
-        "Prebieha generovanie jednotlivých segmentov. Dávkové generovanie nie je možné spustiť.": "Individual segments are generating. Batch generation cannot be started.",
-        "Všetky segmenty už majú vygenerované audio alebo sú prázdne.": "All segments already have audio generated or are empty.",
-        "Spúšťam dávkové generovanie {0} segmentov...": "Starting batch generation of {0} segments...",
-        "Ruším generovanie...": "Canceling generation...",
-        "Dávkové generovanie dokončené! Audio automaticky zlúčené.": "Batch generation complete! Audio merged automatically.",
-        "Dávkové generovanie zrušené.": "Batch generation canceled.",
-        "Chyba dávkového generovania: {0}": "Batch generation error: {0}",
-        "Chyba: Dávkové generovanie zlyhalo.": "Error: Batch generation failed.",
-        "📝 Vytvoriť jeden segment": "📝 Create single segment",
-        "Zadajte dĺžku ticha v sekundách:": "Enter silence duration in seconds:",
-        "Vložiť Ticho": "Insert Silence",
-        "Do segmentu {0} vložené {1}s ticho.": "Inserted {1}s silence into segment {0}.",
-        "Chyba prehrávača: {0}": "Player error: {0}",
-        "Chyba prehrávača.": "Player error.",
-    }
-}
-
-# --- Hlavná trieda aplikácie ---
 
 class CustomTextEdit(QTextEdit):
-    """Rozšírený QTextEdit pre sledovanie zamerania (Focus In)."""
+    """Extended QTextEdit for tracking focus (Focus In)."""
     focus_in_signal = pyqtSignal(object)
 
     def focusInEvent(self, event):
-        """Preťaženie udalosti pri získaní focusu."""
+        """Override focus in event."""
         super().focusInEvent(event)
         self.focus_in_signal.emit(self)
 
@@ -973,15 +928,18 @@ class TTS_App(QMainWindow):
     def __init__(self):
         super().__init__()
 
+        self.log_viewer = None
+        print("[INFO] Application started and initialized successfully.")
+
         self.temp_file_manager = TempFileManager()
         self.active_text_widget = None
         self.audio_content = None
         self.full_audio_temp_path = None
         self.segment_data = []
 
-        # --- NOVÉ: Konfigurácia jazyka a cien ---
+        # --- NEW: Language and pricing configuration ---
         self.config_path = os.path.join(APP_ROOT, "settings.json")
-        self.current_lang = "sk"
+        self.current_lang = "en"
         self.pro_rate = 0.0
         self.flash_rate = 0.0
         self.in_tokens_count = 0
@@ -989,24 +947,24 @@ class TTS_App(QMainWindow):
         self.total_cost = 0.0
         self.load_settings()
 
-        # --- VYLEPŠENÉ: Počítadlá znakov ---
+        # --- ENHANCED: Character counters ---
         self.pro_char_count = 0
         self.flash_char_count = 0
 
-        # Workery pre generovanie
+        # Workers for generation
         self.current_worker = None
         self.current_thread = None
         self.batch_worker: SegmentBatchWorker | None = None
         self.batch_thread: QThread | None = None
         
-        # --- VYLEPŠENÉ: Sledovanie bežiacich generátorov pre multitasking ---
-        # ZMENA: Prechádzame na threading.Thread, active_single_gen_threads už nie je nutné
+        # --- ENHANCED: Tracking running generators for multitasking ---
+        # CHANGE: Switching to threading.Thread, active_single_gen_threads is no longer needed
         self.active_single_gen_threads = {} # {index: Thread}
 
-        # NOVÉ: Sledovanie pre dynamické generovanie ukážky hlasu (trvalá cache vo VOICES_DIR)
+        # NEW: Tracking for dynamic voice preview generation (persistent cache in VOICES_DIR)
         self.active_preview_thread = None
 
-        # Prehrávač
+        # Player
         self.player = QMediaPlayer()
         self.audio_output = QAudioOutput()
         self.player.setAudioOutput(self.audio_output)
@@ -1017,145 +975,25 @@ class TTS_App(QMainWindow):
         self.populate_gemini_voices()
         self.fetch_dynamic_models()
 
-        self.setWindowTitle("Gemini TTS Generator v12 (Multitasking & Enhancements)")
+        self.setWindowTitle("Gemini TTS Generator")
         self.setGeometry(100, 100, 1400, 900)
 
-        self.full_waveform_label.setText(self.tr("Krivka: Zlúčte segmenty pre zobrazenie celkovej waveform."))
+        self.full_waveform_label.setText("Waveform: Merge segments to view full waveform.")
         self.full_waveform_label.setPixmap(QPixmap())
 
         self.gemini_model_combo.setCurrentText(list(GEMINI_TTS_MODELS.keys())[0])
         self.update_char_count_labels()
-        self.retranslate_ui() # Inicializačný preklad
 
-    def tr(self, text: str) -> str:
-        """Vráti preklad textu podľa aktuálneho jazyka."""
-        en_dict = {
-            "1. Vstup a Nastavenia": "1. Input & Settings",
-            "Hlavný textový vstup": "Main Text Input",
-            "Vložte sem váš text na prevod na reč...": "Paste your text for text-to-speech here...",
-            "Predvolené nastavenia generovania": "Default Generation Settings",
-            "TTS Model:": "TTS Model:",
-            "Predvolený Hlas:": "Default Voice:",
-            "🔊 Ukážka": "🔊 Preview",
-            "Jazyk:": "Language:",
-            "Štýl (predvoľba):": "Style (preset):",
-            "Prompt (EN):": "Prompt (EN):",
-            "Vlastný 'Style Prompt' v angličtine...": "Custom 'Style Prompt' in English...",
-            "Rýchlosť Reči:": "Speech Rate:",
-            "Teplota:": "Temperature:",
-            "Ovládanie segmentácie a generovania": "Segmentation and Generation Control",
-            "Použiť celý text ako jeden segment": "Use full text as one segment",
-            "Viet/Segment:": "Sentences/Seg.:",
-            "✂ Rozdeliť text na segmenty": "✂ Split text into segments",
-            "🚀 Generovať VŠETKY Segmenty": "🚀 Generate ALL Segments",
-            "2. Editor Segmentov": "2. Segments Editor",
-            "Segmenty": "Segments",
-            "➕ Vložiť Prázdny Segment": "➕ Add Empty Segment",
-            "3. Finálny Výstup": "3. Final Output",
-            "Finálny výstup": "Final output",
-            "Krivka: Zlúčte segmenty...": "Waveform: Merge segments...",
-            "Krivka: Zlúčte segmenty pre zobrazenie celkovej waveform.": "Waveform: Merge segments to view full waveform.",
-            "➕ Zlúčiť Segmenty": "➕ Merge Segments",
-            "▶ Prehrať Celok": "▶ Play Full",
-            "💾 Uložiť WAV": "💾 Save WAV",
-            "◼ STOP": "◼ STOP",
-            "◼ Zastaviť Celok": "◼ Stop Full",
-            "Aplikácia pripravená.": "Application ready.",
-            "Súbor": "File",
-            "Nový Projekt": "New Project",
-            "Načítať Projekt...": "Load Project...",
-            "Uložiť Projekt...": "Save Project...",
-            "Uložiť Celý WAV...": "Save Full WAV...",
-            "Ukončiť": "Exit",
-            "Nástroje": "Tools",
-            "Vyčistiť dočasné súbory": "Clear temporary files",
-            "Pomoc": "Help",
-            "O programe": "About",
-            "Jazyk / Language": "Jazyk / Language",
-            "Slovenčina (SK)": "Slovak (SK)",
-            "Čeština (CZ)": "Czech (CZ)",
-            "Angličtina (EN)": "English (EN)",
-            "Krivka nevygenerovaná": "Waveform not generated",
-            "Generuje sa...": "Generating...",
-            "Čaká sa...": "Waiting...",
-            "Generovanie ZLYHALO.": "Generation FAILED.",
-            "🏷️ Vložiť Tag": "🏷️ Insert Tag",
-            "🔊 Generovať": "🔊 Generate",
-            "▶ Prehrať": "▶ Play",
-            "◼ Zastaviť": "◼ Stop",
-            "🔇 Ticho": "🔇 Silence",
-            "🗑 Zmazať": "🗑 Delete",
-            "⏳...": "⏳...",
-            "Zadajte prosím text na spracovanie.": "Please enter text to process.",
-            "Text nebolo možné spracovať na segmenty.": "Could not process text into segments.",
-            "Vytvorený 1 segment z celého textu.": "Created 1 segment from the full text.",
-            "Text rozdelený na {0} segmentov.": "Text split into {0} segments.",
-            "Pridaný nový segment. Celkovo: {0}.": "Added new segment. Total: {0}.",
-            "Segment zmazaný. Ostáva {0} segmentov.": "Segment deleted. {0} segments remaining.",
-            "Nie všetky segmenty majú vygenerované audio.": "Not all segments have generated audio.",
-            "Segmenty úspešne zlúčené!": "Segments merged successfully!",
-            "Chyba pri zlúčení audio segmentov: {0}": "Error merging audio segments: {0}",
-            "Žiadny zvuk na uloženie. Najprv zlúčte segmenty.": "No audio to save. Merge segments first.",
-            "Prehrávanie zastavené.": "Playback stopped.",
-            "Prehrávam finálny zvuk...": "Playing final audio...",
-            "Súbor úspešne uložený: {0}": "File saved successfully: {0}",
-            "Vytvorený nový projekt.": "New project created.",
-            "Projekt úspešne uložený do: {0}": "Project saved successfully to: {0}",
-            "Projekt načítaný s {0} segmentmi.": "Project loaded with {0} segments.",
-            "Projekt načítaný. Rozdeľte text na segmenty.": "Project loaded. Split text into segments.",
-            "Aktuálne TTS modely úspešne načítané z Gemini API.": "Current TTS models successfully loaded from Gemini API.",
-            "Načítavam aktuálne modely z API...": "Loading current models from API...",
-            "Nepodarilo sa načítať modely, použijú sa predvolené. ({0})": "Failed to load models, using defaults. ({0})",
-            "Pre hlas '{0}' nebola nájdená cesta k ukážke.": "Preview path not found for voice '{0}'.",
-            "Prehrávanie ukážky zastavené.": "Preview playback stopped.",
-            "Súbor s ukážkou nebol nájdený na ceste:": "Preview file not found at path:",
-            "Prehrávam lokálnu ukážku hlasu: {0}...": "Playing local voice preview: {0}...",
-            "Audio pre tento segment nebolo vygenerované.": "Audio for this segment has not been generated.",
-            "Prehrávam segment {0}...": "Playing segment {0}...",
-            "Gemini API kľúč nebol nájdený.": "Gemini API key not found.",
-            "Prebieha dávkové generovanie. Zrušte ho, ak chcete generovať iba jeden segment.": "Batch generation in progress. Cancel it to generate a single segment.",
-            "Segment neobsahuje text na generovanie.": "Segment contains no text to generate.",
-            "Generujem reč (Segment {0})...": "Generating speech (Segment {0})...",
-            "Segment {0} vygenerovaný.": "Segment {0} generated.",
-            "Počas generovania segmentu {0} nastala chyba.": "Error occurred during generation of segment {0}.",
-            "Chyba pri generovaní segmentu {0}:\n{1}": "Error generating segment {0}:\n{1}",
-            "Prebieha generovanie jednotlivých segmentov. Dávkové generovanie nie je možné spustiť.": "Individual segments are generating. Batch generation cannot be started.",
-            "Všetky segmenty už majú vygenerované audio alebo sú prázdne.": "All segments already have audio generated or are empty.",
-            "Spúšťam dávkové generovanie {0} segmentov...": "Starting batch generation of {0} segments...",
-            "Ruším generovanie...": "Canceling generation...",
-            "Dávkové generovanie dokončené! Audio automaticky zlúčené.": "Batch generation complete! Audio merged automatically.",
-            "Dávkové generovanie zrušené.": "Batch generation canceled.",
-            "Chyba dávkového generovania: {0}": "Batch generation error: {0}",
-            "Chyba: Dávkové generovanie zlyhalo.": "Error: Batch generation failed.",
-            "📝 Vytvoriť jeden segment": "📝 Create single segment",
-            "Zadajte dĺžku ticha v sekundách:": "Enter silence duration in seconds:",
-            "Vložiť Ticho": "Insert Silence",
-            "Do segmentu {0} vložené {1}s ticho.": "Inserted {1}s silence into segment {0}.",
-            "Chyba prehrávača: {0}": "Player error: {0}",
-            "Chyba prehrávača.": "Player error.",
-            "Nastavenie API kľúča": "API Key Settings",
-            "Vložte váš Gemini API kľúč:": "Enter your Gemini API key:",
-            "API kľúč bol úspešne uložený.": "API key was successfully saved.",
-            "Cenník (Pro)": "Pricing (Pro)",
-            "Sadzba za 1 milión tokenov/znakov pre PRO model (v $):": "Rate per 1 million tokens/chars for PRO model (in $):",
-            "Cenník (Flash)": "Pricing (Flash)",
-            "Sadzba za 1 milión tokenov/znakov pre FLASH model (v $):": "Rate per 1 million tokens/chars for FLASH model (in $):",
-            "Sadzby úspešne uložené.": "Rates successfully saved.",
-            "Nastaviť API kľúč...": "Set API Key...",
-            "Nastaviť sadzby (Cenník)...": "Set Rates (Pricing)..."
-        }
-        return en_dict.get(text, text)
 
     def load_settings(self):
-        """Načíta nastavenia aplikácie zo súboru."""
+        """Loads application settings from file."""
         global GEMINI_API_KEY
         
-        # 1. Najprv načítame zo settings.json
+        # 1. First load from settings.json
         if os.path.exists(self.config_path):
             try:
                 with open(self.config_path, "r", encoding="utf-8") as f:
                     config = json.load(f)
-                    self.current_lang = config.get("language", "sk")
                     self.pro_rate = config.get("pro_rate", 0.0)
                     self.flash_rate = config.get("flash_rate", 0.0)
                     enc_key = config.get("encrypted_api_key", "")
@@ -1166,7 +1004,7 @@ class TTS_App(QMainWindow):
             except Exception as e:
                 print(f"Error loading settings: {e}")
 
-        # 2. Migrácia zo starého súboru gemini.txt (ak existuje)
+        # 2. Migration from old gemini.txt file (if exists)
         old_key_path = os.path.join(APP_ROOT, "gemini.txt")
         if os.path.exists(old_key_path):
             try:
@@ -1174,16 +1012,16 @@ class TTS_App(QMainWindow):
                     api_key = f.read().strip()
                 if api_key:
                     GEMINI_API_KEY = api_key
-                    self.save_settings() # Zašifruje a uloží
-                    print("INFO: API kľúč úspešne migrovaný zo súboru gemini.txt do settings.json.")
-                # Zmazať starý nezabezpečený súbor
+                    self.save_settings() # Encrypts and saves
+                    print("INFO: API key successfully migrated from gemini.txt to settings.json.")
+                # Delete old unsecured file
                 os.remove(old_key_path)
-                print("INFO: Súbor gemini.txt bol bezpečne odstránený.")
+                print("INFO: gemini.txt file was safely removed.")
             except Exception as e:
-                print(f"CHYBA pri migrácii gemini.txt: {e}")
+                print(f"ERROR migrating gemini.txt: {e}")
 
     def save_settings(self):
-        """Uloží nastavenia aplikácie do súboru."""
+        """Saves application settings to file."""
         global GEMINI_API_KEY
         try:
             config = {}
@@ -1205,98 +1043,58 @@ class TTS_App(QMainWindow):
         except Exception as e:
             print(f"Error saving settings: {e}")
 
-    def change_language(self, lang_code):
-        """Zmení jazyk aplikácie a aktualizuje UI. (Odstránené)"""
-        pass
+        # Translate menu (updates action texts)
+        self.file_menu.setTitle("File")
+        self.new_action.setText("New Project")
+        self.open_action.setText("Load Project...")
+        self.save_action.setText("Save Project...")
+        self.save_audio_action.setText("Save Full WAV...")
+        self.exit_action.setText("Exit")
 
-    def retranslate_ui(self):
-        """Aktualizuje všetky statické texty v UI podľa aktuálneho jazyka."""
-        self.tabs.setTabText(0, self.tr("1. Vstup a Nastavenia"))
-        self.tabs.setTabText(1, self.tr("2. Editor Segmentov"))
-        self.tabs.setTabText(2, self.tr("3. Finálny Výstup"))
-
-        self.input_group.setTitle(self.tr("Hlavný textový vstup"))
-        self.text_input.setPlaceholderText(self.tr("Vložte sem váš text na prevod na reč..."))
-        
-        self.settings_group.setTitle(self.tr("Predvolené nastavenia generovania"))
-        self.gemini_model_combo_label.setText(self.tr("TTS Model:"))
-        self.gemini_voice_combo_label.setText(self.tr("Predvolený Hlas:"))
-        self.voice_preview_button.setText(self.tr("🔊 Ukážka"))
-        self.language_combo_label.setText(self.tr("Jazyk:"))
-        self.style_combo_label.setText(self.tr("Štýl (predvoľba):"))
-        self.prompt_label.setText(self.tr("Prompt (EN):"))
-        self.style_prompt_input.setPlaceholderText(self.tr("Vlastný 'Style Prompt' v angličtine..."))
-        
-        self.speed_label.setText(self.tr("Rýchlosť Reči:") + f" {self.speed_slider.value()/100:.2f}x")
-        self.temp_label.setText(self.tr("Teplota:") + f" {self.temp_slider.value()/10:.1f}")
-        
-        self.control_group.setTitle(self.tr("Ovládanie segmentácie a generovania"))
-        self.use_full_text_checkbox.setText(self.tr("Použiť celý text ako jeden segment"))
-        self.segment_count_label.setText(self.tr("Viet/Segment:") + f" {self.segment_count_slider.value()}")
-        self.split_button.setText(self.tr("✂ Rozdeliť text na segmenty"))
-        self.generate_all_button.setText(self.tr("🚀 Generovať VŠETKY Segmenty"))
-        
-        self.segments_group.setTitle(self.tr("Segmenty"))
-        self.add_segment_button.setText(self.tr("➕ Vložiť Prázdny Segment"))
-        
-        self.full_gen_group.setTitle(self.tr("Finálny výstup"))
-        if self.full_waveform_label.pixmap().isNull():
-            self.full_waveform_label.setText(self.tr("Krivka: Zlúčte segmenty pre zobrazenie celkovej waveform."))
-        self.merge_segments_button.setText(self.tr("➕ Zlúčiť Segmenty"))
-        self.play_full_button.setText(self.tr("▶ Prehrať Celok") if "▶" in self.play_full_button.text() else self.tr("◼ Zastaviť Celok"))
-        self.save_full_button.setText(self.tr("💾 Uložiť WAV"))
-        self.stop_all_button.setText(self.tr("◼ STOP"))
-
-        # Preklad menu (aktualizácia prebehne automaticky rekonštrukciou textov, ale mení sa len názov QAction)
-        self.file_menu.setTitle(self.tr("Súbor"))
-        self.new_action.setText(self.tr("Nový Projekt"))
-        self.open_action.setText(self.tr("Načítať Projekt..."))
-        self.save_action.setText(self.tr("Uložiť Projekt..."))
-        self.save_audio_action.setText(self.tr("Uložiť Celý WAV..."))
-        self.exit_action.setText(self.tr("Ukončiť"))
-
-        self.tools_menu.setTitle(self.tr("Nástroje"))
-        self.clean_temp_action.setText(self.tr("Vyčistiť dočasné súbory"))
+        self.tools_menu.setTitle("Tools")
+        self.clean_temp_action.setText("Clear temporary files")
         if hasattr(self, 'set_api_key_action'):
-            self.set_api_key_action.setText(self.tr("Nastaviť API kľúč..."))
+            self.set_api_key_action.setText("Set API Key...")
         if hasattr(self, 'set_pricing_action'):
-            self.set_pricing_action.setText(self.tr("Nastaviť sadzby (Cenník)..."))
+            self.set_pricing_action.setText("Set Rates (Pricing)...")
+        if hasattr(self, 'show_logs_action'):
+            self.show_logs_action.setText("Show Logs...")
         
-        self.help_menu.setTitle(self.tr("Pomoc"))
-        self.about_action.setText(self.tr("O programe"))
+        self.help_menu.setTitle("Help")
+        self.about_action.setText("About")
 
-        # Aktualizácia existujúcich segmentov (dynamický preklad UI prvkov v segmentoch)
+        # Update existing segments (dynamic translation of UI elements inside segments)
         for i in range(len(self.segment_data)):
             try:
                 play_btn = self.segments_container.findChild(QPushButton, f"play_button_{i}")
                 if play_btn:
-                    if "▶" in play_btn.text(): play_btn.setText(self.tr("▶ Prehrať"))
-                    else: play_btn.setText(self.tr("◼ Zastaviť"))
+                    if "▶" in play_btn.text(): play_btn.setText("▶ Play")
+                    else: play_btn.setText("◼ Stop")
                 
                 gen_btn = self.segments_container.findChild(QPushButton, f"generate_button_{i}")
-                if gen_btn: gen_btn.setText(self.tr("🔊 Generovať"))
+                if gen_btn: gen_btn.setText("🔊 Generate")
                 
                 silence_btn = self.segments_container.findChild(QPushButton, f"silence_button_{i}")
-                if silence_btn: silence_btn.setText(self.tr("🔇 Ticho"))
+                if silence_btn: silence_btn.setText("🔇 Silence")
                 
                 del_btn = self.segments_container.findChild(QPushButton, f"delete_button_{i}")
-                if del_btn: del_btn.setText(self.tr("🗑 Zmazať"))
+                if del_btn: del_btn.setText("🗑 Delete")
                 
                 tag_btn = self.segments_container.findChild(QPushButton, f"tag_button_{i}")
-                if tag_btn: tag_btn.setText(self.tr("🏷️ Vložiť Tag"))
+                if tag_btn: tag_btn.setText("Insert Tag")
             except Exception:
                 pass
                 
-        # Status bar update len ak je defaultná
-        if "pripravená" in self.status_bar.currentMessage() or "ready" in self.status_bar.currentMessage():
-            self.status_bar.showMessage(self.tr("Aplikácia pripravená."))
+        # Status bar update only if it is the default message
+        if "ready" in self.status_bar.currentMessage().lower() or "pripravená" in self.status_bar.currentMessage().lower():
+            self.status_bar.showMessage("Application ready.")
 
     
     def populate_gemini_voices(self):
-        """Naplní ComboBox pevným zoznamom Gemini hlasov s pohlavím."""
+        """Populates the ComboBox with a static list of Gemini voices with gender information."""
         self.gemini_voice_combo.clear()
         
-        # --- VYLEPŠENÉ: Zobrazí meno a pohlavie ---
+        # --- ENHANCED: Displays name and gender ---
         for voice, gender in GEMINI_VOICE_INFO.items():
             gender_char = "M" if gender == "Male" else "F"
             self.gemini_voice_combo.addItem(f"{voice} ({gender_char})", voice)
@@ -1309,7 +1107,7 @@ class TTS_App(QMainWindow):
             self.gemini_voice_combo.setCurrentIndex(0)
 
     def fetch_dynamic_models(self):
-        """Spustí vlákno na asynchrónne načítanie aktuálnych modelov."""
+        """Starts a thread to asynchronously load current models."""
         self.model_fetch_thread = QThread()
         self.model_fetch_worker = ModelFetchWorker()
         self.model_fetch_worker.moveToThread(self.model_fetch_thread)
@@ -1317,54 +1115,54 @@ class TTS_App(QMainWindow):
         self.model_fetch_worker.finished.connect(self.on_models_fetched)
         self.model_fetch_worker.error.connect(self.on_models_fetch_error)
         
-        self.gemini_model_combo.setItemText(0, "Načítavam aktuálne modely z API...")
+        self.gemini_model_combo.setItemText(0, "Loading current models from API...")
         self.model_fetch_thread.start()
 
     def on_models_fetched(self, models_dict):
         global GEMINI_TTS_MODELS
-        # Ak chceme zachovať pôvodné modely a pridať nové, zjednotíme slovníky
+        # Update default models with dynamically loaded ones
         GEMINI_TTS_MODELS.update(models_dict)
         
         current_text = self.gemini_model_combo.currentText()
         self.gemini_model_combo.clear()
         self.gemini_model_combo.addItems(GEMINI_TTS_MODELS.keys())
-        self.status_bar.showMessage(self.tr("Aktuálne TTS modely úspešne načítané z Gemini API."))
+        self.status_bar.showMessage("Current TTS models successfully loaded from Gemini API.")
         
         self.model_fetch_thread.quit()
         self.model_fetch_thread.wait()
 
     def on_models_fetch_error(self, err_msg):
-        self.status_bar.showMessage(self.tr("Nepodarilo sa načítať modely, použijú sa predvolené. ({0})").format(err_msg))
+        self.status_bar.showMessage("Failed to load models, using defaults. ({0})".format(err_msg))
         self.gemini_model_combo.clear()
         self.gemini_model_combo.addItems(GEMINI_TTS_MODELS.keys())
         self.model_fetch_thread.quit()
         self.model_fetch_thread.wait()
 
     def set_active_text_widget(self, widget: QTextEdit):
-        """Uloží referenciu na textové pole, ktoré práve získalo focus."""
+        """Stores reference to the text box that just gained focus."""
         self.active_text_widget = widget
 
     def get_segment_play_button(self, index: int) -> QPushButton | None:
-        """Nájde tlačidlo na prehrávanie segmentu podľa indexu."""
-        # Skontrolujeme, či kontajner ešte existuje
+        """Finds segment play button by index."""
+        # Check if container still exists
         if self.segments_container:
             return self.segments_container.findChild(QPushButton, f"play_button_{index}")
         return None
 
     def update_segment_play_button_ui(self, index: int, state):
-        """Aktualizuje text tlačidla Prehrať/Zastaviť segmentu."""
+        """Updates Play/Stop button text of a segment."""
         button = self.get_segment_play_button(index)
         if button:
              if state == QMediaPlayer.PlaybackState.PlayingState:
-                 button.setText("◼ Zastaviť")
+                 button.setText("◼ Stop")
              elif state in [QMediaPlayer.PlaybackState.StoppedState, QMediaPlayer.PlaybackState.PausedState]:
-                 button.setText("▶ Prehrať")
+                 button.setText("▶ Play")
 
     def update_play_button_state(self, state):
-        """Aktualizuje text tlačidla Prehrať Celok alebo segmentu."""
+        """Updates Play Full or segment play button texts."""
         is_playing_local_file = self.player.source().isLocalFile()
 
-        # Ak sa neprehráva lokálny súbor (napr. chyba), resetujeme UI
+        # If not playing local file (e.g. error), reset UI
         if not is_playing_local_file:
             is_playing = state == QMediaPlayer.PlaybackState.PlayingState
             self.stop_all_button.setEnabled(is_playing)
@@ -1374,47 +1172,45 @@ class TTS_App(QMainWindow):
         source_path = self.player.source().toLocalFile()
         is_preview = VOICES_DIR in os.path.normpath(source_path)
 
-        # Ak je zdroj ukážka, neupravuj UI segmentov/celku, iba STOP tlačidlo
+        # If preview is playing, only update the STOP button, keep segment buttons enabled
         if is_preview:
             is_playing = state == QMediaPlayer.PlaybackState.PlayingState
             self.stop_all_button.setEnabled(is_playing)
             return
 
-        # Reset všetkých segmentových tlačidiel na "Prehrať"
+        # Reset other segment buttons to "Play"
         for i in range(len(self.segment_data)):
             segment_path = self.segment_data[i].get("audio_temp_path")
-            # Ak sa neprehráva práve tento segment, resetuj ho
             if segment_path and segment_path != source_path:
                 self.update_segment_play_button_ui(i, QMediaPlayer.PlaybackState.StoppedState)
 
-        # Aktualizácia stavu hlavného prehrávača
+        # Update main player buttons
         if source_path and source_path == self.full_audio_temp_path:
             if state == QMediaPlayer.PlaybackState.PlayingState:
-                self.play_full_button.setText("◼ Zastaviť Celok")
+                self.play_full_button.setText("◼ Stop Full")
             else:
-                self.play_full_button.setText("▶ Prehrať Celok")
+                self.play_full_button.setText("▶ Play Full")
         else:
-            self.play_full_button.setText("▶ Prehrať Celok")
+            self.play_full_button.setText("▶ Play Full")
 
-        # Aktualizácia stavu prehrávaného segmentu
+        # Update currently playing segment button
         if source_path:
             for i, data in enumerate(self.segment_data):
                 if data.get("audio_temp_path") == source_path:
                     self.update_segment_play_button_ui(i, state)
                     break
 
-        # Globálna logika pre UI enable/disable a STOP tlačidlo
         is_playing = state == QMediaPlayer.PlaybackState.PlayingState
         self.stop_all_button.setEnabled(is_playing)
 
-        # UŽ NEZAKAZUJEME CELÉ UI POČAS PREHRÁVANIA SEGMENTU (aby bežal multitasking)
+        # Do not disable UI during preview or multitasking playback
         if not (self.batch_thread and self.batch_thread.isRunning()):
             if not is_playing:
                 self.set_ui_enabled(True)
 
 
     def set_dark_style(self):
-        """Nastaví globálny CSS pre tmavý režim a lepšiu estetiku."""
+        """Sets global stylesheet for dark mode and premium aesthetics."""
         dark_stylesheet = """
         QMainWindow, QWidget {
             background-color: #2e2e2e;
@@ -1536,33 +1332,42 @@ class TTS_App(QMainWindow):
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
 
-        # --- HLAVNÝ TAB WIDGET ---
+        # --- MAIN TAB WIDGET ---
         self.tabs = QTabWidget()
         main_layout.addWidget(self.tabs)
 
-        # --- KARTA 1: Vstup a Nastavenia ---
+        # --- TAB 1: Input & Settings ---
         self.tab1 = QWidget()
-        self.tabs.addTab(self.tab1, "1. Vstup a Nastavenia")
+        self.tabs.addTab(self.tab1, "1. Input & Settings")
         tab1_layout = QHBoxLayout(self.tab1)
 
-        # ĽAVÝ PANEL: Textový vstup
+        # LEFT PANEL: Text Input
         left_panel_tab1 = QWidget()
         left_layout_tab1 = QVBoxLayout(left_panel_tab1)
-        self.input_group = QGroupBox("Hlavný textový vstup")
+        self.input_group = QGroupBox("Main Text Input")
         input_layout = QVBoxLayout(self.input_group)
+        
+        # Import button layout
+        import_layout = QHBoxLayout()
+        self.import_button = QPushButton("Import TXT")
+        self.import_button.clicked.connect(self.import_txt_file)
+        import_layout.addWidget(self.import_button)
+        import_layout.addStretch()
+        input_layout.addLayout(import_layout)
+
         self.text_input = CustomTextEdit()
         self.text_input.focus_in_signal.connect(self.set_active_text_widget)
-        self.text_input.setPlaceholderText("Vložte sem váš text na prevod na reč...")
+        self.text_input.setPlaceholderText("Paste your text for text-to-speech here...")
         input_layout.addWidget(self.text_input)
         left_layout_tab1.addWidget(self.input_group)
-        tab1_layout.addWidget(left_panel_tab1, 2) # Väčší pomer
+        tab1_layout.addWidget(left_panel_tab1, 2) # Larger ratio
 
-        # PRAVÝ PANEL: Nastavenia a ovládanie
+        # RIGHT PANEL: Settings & Control
         right_panel_tab1 = QWidget()
         right_layout_tab1 = QVBoxLayout(right_panel_tab1)
         right_layout_tab1.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        self.settings_group = QGroupBox("Predvolené nastavenia generovania")
+        self.settings_group = QGroupBox("Default Generation Settings")
         settings_layout = QGridLayout(self.settings_group)
 
         self.gemini_model_combo_label = QLabel("TTS Model:")
@@ -1571,23 +1376,23 @@ class TTS_App(QMainWindow):
         self.gemini_model_combo.addItems(GEMINI_TTS_MODELS.keys())
         settings_layout.addWidget(self.gemini_model_combo, 0, 1, 1, 2)
 
-        self.gemini_voice_combo_label = QLabel("Predvolený Hlas:")
+        self.gemini_voice_combo_label = QLabel("Default Voice:")
         settings_layout.addWidget(self.gemini_voice_combo_label, 1, 0)
         self.gemini_voice_combo = QComboBox()
-        self.voice_preview_button = QPushButton("🔊 Ukážka")
+        self.voice_preview_button = QPushButton("🔊 Preview")
         self.voice_preview_button.clicked.connect(self.play_voice_preview)
         settings_layout.addWidget(self.gemini_voice_combo, 1, 1)
         settings_layout.addWidget(self.voice_preview_button, 1, 2)
         
-        # NOVÉ: Výber jazyka
-        self.language_combo_label = QLabel("Jazyk:")
+        # NEW: Language Selection
+        self.language_combo_label = QLabel("Language:")
         settings_layout.addWidget(self.language_combo_label, 2, 0)
         self.language_combo = QComboBox()
         self.language_combo.addItems(SUPPORTED_LANGUAGES.keys())
-        self.language_combo.setCurrentText("Slovak (SK)") # Predvolený jazyk
+        self.language_combo.setCurrentText("English (US)") # Default language
         settings_layout.addWidget(self.language_combo, 2, 1, 1, 2)
 
-        self.style_combo_label = QLabel("Štýl (predvoľba):")
+        self.style_combo_label = QLabel("Style (preset):")
         settings_layout.addWidget(self.style_combo_label, 3, 0)
         self.style_prompt_combo = QComboBox()
         self.style_prompt_combo.addItems(STYLE_PROMPT_OPTIONS.keys())
@@ -1597,33 +1402,33 @@ class TTS_App(QMainWindow):
         self.prompt_label = QLabel("Prompt (EN):")
         settings_layout.addWidget(self.prompt_label, 4, 0, Qt.AlignmentFlag.AlignTop)
         self.style_prompt_input = QTextEdit()
-        self.style_prompt_input.setPlaceholderText("Vlastný 'Style Prompt' v angličtine...")
+        self.style_prompt_input.setPlaceholderText("Custom 'Style Prompt' in English...")
         self.style_prompt_input.setMaximumHeight(60)
         settings_layout.addWidget(self.style_prompt_input, 4, 1, 1, 2)
         
-        # NOVÉ: Slider pre rýchlosť reči
-        self.speed_label = QLabel("Rýchlosť Reči: 1.00x")
+        # NEW: Slider for speech rate
+        self.speed_label = QLabel("Speech Rate: 1.00x")
         settings_layout.addWidget(self.speed_label, 5, 0)
         self.speed_slider = QSlider(Qt.Orientation.Horizontal)
-        self.speed_slider.setRange(25, 400) # Rozsah 0.25x až 4.00x
-        self.speed_slider.setValue(100) # Predvolená rýchlosť 1.00x
-        self.speed_slider.valueChanged.connect(lambda v: self.speed_label.setText(self.tr("Rýchlosť Reči:") + f" {v/100:.2f}x"))
+        self.speed_slider.setRange(25, 400) # Range 0.25x to 4.00x
+        self.speed_slider.setValue(100) # Default speed 1.00x
+        self.speed_slider.valueChanged.connect(lambda v: self.speed_label.setText("Speech Rate:" + f" {v/100:.2f}x"))
         settings_layout.addWidget(self.speed_slider, 5, 1, 1, 2)
 
-        self.temp_label = QLabel(f"Teplota: 1.0")
+        self.temp_label = QLabel(f"Temperature: 1.0")
         settings_layout.addWidget(self.temp_label, 6, 0)
         self.temp_slider = QSlider(Qt.Orientation.Horizontal)
         self.temp_slider.setRange(0, 20)
         self.temp_slider.setValue(10)
-        self.temp_slider.valueChanged.connect(lambda v: self.temp_label.setText(self.tr("Teplota:") + f" {v/10:.1f}"))
+        self.temp_slider.valueChanged.connect(lambda v: self.temp_label.setText("Temperature:" + f" {v/10:.1f}"))
         settings_layout.addWidget(self.temp_slider, 6, 1, 1, 2)
         
         right_layout_tab1.addWidget(self.settings_group)
 
-        self.control_group = QGroupBox("Ovládanie segmentácie a generovania")
+        self.control_group = QGroupBox("Segmentation and Generation Control")
         control_layout = QVBoxLayout(self.control_group)
         
-        self.use_full_text_checkbox = QCheckBox("Použiť celý text ako jeden segment")
+        self.use_full_text_checkbox = QCheckBox("Use full text as one segment")
         self.use_full_text_checkbox.stateChanged.connect(self.toggle_segmentation_controls)
         control_layout.addWidget(self.use_full_text_checkbox)
 
@@ -1631,19 +1436,19 @@ class TTS_App(QMainWindow):
         self.segment_count_slider = QSlider(Qt.Orientation.Horizontal)
         self.segment_count_slider.setRange(1, 10)
         self.segment_count_slider.setValue(3)
-        self.segment_count_label = QLabel(f"Viet/Segment: {self.segment_count_slider.value()}")
+        self.segment_count_label = QLabel(f"Sentences/Seg.: {self.segment_count_slider.value()}")
         segment_count_layout.addWidget(self.segment_count_label)
         segment_count_layout.addWidget(self.segment_count_slider)
         control_layout.addLayout(segment_count_layout)
 
-        self.split_button = QPushButton("✂ Rozdeliť text na segmenty")
+        self.split_button = QPushButton("Split text into segments")
         self.split_button.clicked.connect(self.split_text_and_display)
         control_layout.addWidget(self.split_button)
 
         self.segment_count_slider.valueChanged.connect(self.update_split_button_on_slider_change)
         self.update_split_button_on_slider_change(self.segment_count_slider.value())
 
-        self.generate_all_button = QPushButton("🚀 Generovať VŠETKY Segmenty")
+        self.generate_all_button = QPushButton("Generate ALL Segments")
         self.generate_all_button.clicked.connect(self.start_batch_generation)
         self.generate_all_button.setEnabled(False)
         control_layout.addWidget(self.generate_all_button)
@@ -1652,14 +1457,14 @@ class TTS_App(QMainWindow):
         right_layout_tab1.addStretch()
         tab1_layout.addWidget(right_panel_tab1, 1)
 
-        # --- KARTA 2: Segmenty ---
+        # --- TAB 2: Segments ---
         self.tab2 = QWidget()
-        self.tabs.addTab(self.tab2, "2. Editor Segmentov")
+        self.tabs.addTab(self.tab2, "2. Segments Editor")
         tab2_layout = QVBoxLayout(self.tab2)
-        self.segments_group = QGroupBox("Segmenty")
+        self.segments_group = QGroupBox("Segments")
         segments_main_layout = QVBoxLayout(self.segments_group)
 
-        self.add_segment_button = QPushButton("➕ Vložiť Prázdny Segment")
+        self.add_segment_button = QPushButton("➕ Add Empty Segment")
         self.add_segment_button.clicked.connect(self.add_new_segment)
         segments_main_layout.addWidget(self.add_segment_button)
 
@@ -1672,13 +1477,13 @@ class TTS_App(QMainWindow):
         segments_main_layout.addWidget(self.segments_scroll)
         tab2_layout.addWidget(self.segments_group)
 
-        # --- KARTA 3: Finálny výstup ---
+        # --- TAB 3: Final Output ---
         self.tab3 = QWidget()
-        self.tabs.addTab(self.tab3, "3. Finálny Výstup")
+        self.tabs.addTab(self.tab3, "3. Final Output")
         tab3_layout = QVBoxLayout(self.tab3)
         tab3_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        self.full_gen_group = QGroupBox("Finálny výstup")
+        self.full_gen_group = QGroupBox("Final Output")
         self.full_gen_group.setMaximumWidth(1000)
         self.full_gen_layout = QHBoxLayout(self.full_gen_group)
 
@@ -1689,18 +1494,18 @@ class TTS_App(QMainWindow):
         self.full_gen_layout.addWidget(self.full_waveform_label, 2)
 
         full_button_layout = QVBoxLayout()
-        self.merge_segments_button = QPushButton("➕ Zlúčiť Segmenty")
+        self.merge_segments_button = QPushButton("➕ Merge Segments")
         self.merge_segments_button.clicked.connect(self.merge_segments_audio)
         self.merge_segments_button.setEnabled(False)
         full_button_layout.addWidget(self.merge_segments_button)
 
         play_save_layout = QHBoxLayout()
-        self.play_full_button = QPushButton("▶ Prehrať Celok")
+        self.play_full_button = QPushButton("▶ Play Full")
         self.play_full_button.setEnabled(False)
         self.play_full_button.clicked.connect(self.play_full_audio)
         play_save_layout.addWidget(self.play_full_button)
 
-        self.save_full_button = QPushButton("💾 Uložiť WAV")
+        self.save_full_button = QPushButton("Save")
         self.save_full_button.setEnabled(False)
         self.save_full_button.clicked.connect(self.save_audio)
         play_save_layout.addWidget(self.save_full_button)
@@ -1720,13 +1525,13 @@ class TTS_App(QMainWindow):
         self.pro_char_label = QLabel("Pro Chars: 0")
         self.flash_char_label = QLabel("Flash Chars: 0")
         self.tokens_label = QLabel("In/Out Tokens: 0/0")
-        self.cost_label = QLabel("Cena: $0.000000")
+        self.cost_label = QLabel("Cost: $0.000000")
         self.status_bar.addPermanentWidget(self.pro_char_label)
         self.status_bar.addPermanentWidget(self.flash_char_label)
         self.status_bar.addPermanentWidget(self.tokens_label)
         self.status_bar.addPermanentWidget(self.cost_label)
         
-        self.status_bar.showMessage("Aplikácia pripravená.")
+        self.status_bar.showMessage("Application ready.")
 
     def update_full_waveform(self, png_path: str):
         pixmap = QPixmap(png_path)
@@ -1745,53 +1550,64 @@ class TTS_App(QMainWindow):
                  waveform_label.setText("")
 
     def update_style_prompt_text(self, index):
-        selected_sk_name = self.style_prompt_combo.currentText()
-        selected_en_prompt = STYLE_PROMPT_OPTIONS.get(selected_sk_name, "")
+        selected_style_name = self.style_prompt_combo.currentText()
+        selected_en_prompt = STYLE_PROMPT_OPTIONS.get(selected_style_name, "")
         self.style_prompt_input.setText(selected_en_prompt)
 
     def create_menu_bar(self):
         menu_bar = self.menuBar()
-        self.file_menu = menu_bar.addMenu("Súbor")
+        self.file_menu = menu_bar.addMenu("File")
         
-        self.new_action = QAction("Nový Projekt", self); self.new_action.setShortcut(QKeySequence.StandardKey.New); self.new_action.triggered.connect(self.new_project); self.file_menu.addAction(self.new_action)
-        self.open_action = QAction("Načítať Projekt...", self); self.open_action.setShortcut(QKeySequence.StandardKey.Open); self.open_action.triggered.connect(self.load_project); self.file_menu.addAction(self.open_action)
-        self.save_action = QAction("Uložiť Projekt...", self); self.save_action.setShortcut(QKeySequence.StandardKey.Save); self.save_action.triggered.connect(self.save_project); self.file_menu.addAction(self.save_action)
+        self.new_action = QAction("New Project", self); self.new_action.setShortcut(QKeySequence.StandardKey.New); self.new_action.triggered.connect(self.new_project); self.file_menu.addAction(self.new_action)
+        self.open_action = QAction("Load Project...", self); self.open_action.setShortcut(QKeySequence.StandardKey.Open); self.open_action.triggered.connect(self.load_project); self.file_menu.addAction(self.open_action)
+        self.save_action = QAction("Save Project...", self); self.save_action.setShortcut(QKeySequence.StandardKey.Save); self.save_action.triggered.connect(self.save_project); self.file_menu.addAction(self.save_action)
         
         self.file_menu.addSeparator()
-        self.save_audio_action = QAction("Uložiť Celý WAV...", self); self.save_audio_action.triggered.connect(self.save_audio); self.file_menu.addAction(self.save_audio_action)
+        self.save_audio_action = QAction("Save Full WAV...", self); self.save_audio_action.triggered.connect(self.save_audio); self.file_menu.addAction(self.save_audio_action)
         self.file_menu.addSeparator()
         
-        self.exit_action = QAction("Ukončiť", self); self.exit_action.setShortcut(QKeySequence.StandardKey.Quit); self.exit_action.triggered.connect(self.close); self.file_menu.addAction(self.exit_action)
+        self.exit_action = QAction("Exit", self); self.exit_action.setShortcut(QKeySequence.StandardKey.Quit); self.exit_action.triggered.connect(self.close); self.file_menu.addAction(self.exit_action)
         
-        self.tools_menu = menu_bar.addMenu("Nástroje")
-        self.clean_temp_action = QAction("Vyčistiť dočasné súbory", self); self.clean_temp_action.triggered.connect(self.temp_file_manager.cleanup); self.tools_menu.addAction(self.clean_temp_action)
-        self.set_api_key_action = QAction("Nastaviť API kľúč...", self); self.set_api_key_action.triggered.connect(self.set_api_key_dialog); self.tools_menu.addAction(self.set_api_key_action)
-        self.set_pricing_action = QAction("Nastaviť sadzby (Cenník)...", self); self.set_pricing_action.triggered.connect(self.set_pricing_dialog); self.tools_menu.addAction(self.set_pricing_action)
+        self.tools_menu = menu_bar.addMenu("Tools")
+        self.clean_temp_action = QAction("Clear temporary files", self); self.clean_temp_action.triggered.connect(self.temp_file_manager.cleanup); self.tools_menu.addAction(self.clean_temp_action)
+        self.set_api_key_action = QAction("Set API Key...", self); self.set_api_key_action.triggered.connect(self.set_api_key_dialog); self.tools_menu.addAction(self.set_api_key_action)
+        self.set_pricing_action = QAction("Set Rates (Pricing)...", self); self.set_pricing_action.triggered.connect(self.set_pricing_dialog); self.tools_menu.addAction(self.set_pricing_action)
         
-        # Jazykové menu bolo odstránené
+        self.show_logs_action = QAction("Show Logs...", self)
+        self.show_logs_action.triggered.connect(self.show_log_viewer)
+        self.tools_menu.addAction(self.show_logs_action)
         
-        self.help_menu = menu_bar.addMenu("Pomoc")
-        self.about_action = QAction("O programe", self); self.about_action.triggered.connect(lambda: QMessageBox.information(self, self.tr("O programe"), "")); self.help_menu.addAction(self.about_action)
+        # Language menu was removed
+        
+        self.help_menu = menu_bar.addMenu("Help")
+        self.about_action = QAction("About", self); self.about_action.triggered.connect(lambda: QMessageBox.information(self, "About", "Gemini TTS Generator: A demonstration of segmented text-to-speech conversion using the Google Gemini API")); self.help_menu.addAction(self.about_action)
+
+    def show_log_viewer(self):
+        if not self.log_viewer:
+            self.log_viewer = LogViewerDialog(self)
+        self.log_viewer.show()
+        self.log_viewer.raise_()
+        self.log_viewer.activateWindow()
 
     def set_api_key_dialog(self):
         global GEMINI_API_KEY
-        key, ok = QInputDialog.getText(self, self.tr("Nastavenie API kľúča"), self.tr("Vložte váš Gemini API kľúč:"), QLineEdit.EchoMode.Password)
+        key, ok = QInputDialog.getText(self, "API Key Settings", "Enter your Gemini API key:", QLineEdit.EchoMode.Password)
         if ok and key:
             GEMINI_API_KEY = key.strip()
             self.save_settings()
-            self.status_bar.showMessage(self.tr("API kľúč bol úspešne uložený."))
-            self.fetch_dynamic_models() # Skúsiť načítať modely s novým kľúčom
+            self.status_bar.showMessage("API key was successfully saved.")
+            self.fetch_dynamic_models() # Try loading models with the new key
             
     def set_pricing_dialog(self):
-        pro_price, ok1 = QInputDialog.getDouble(self, self.tr("Cenník (Pro)"), self.tr("Sadzba za 1 milión tokenov/znakov pre PRO model (v $):"), self.pro_rate, 0, 1000, 6)
+        pro_price, ok1 = QInputDialog.getDouble(self, "Pricing (Pro)", "Rate per 1 million tokens/chars for PRO model (in $):", self.pro_rate, 0, 1000, 6)
         if ok1:
             self.pro_rate = pro_price
-            flash_price, ok2 = QInputDialog.getDouble(self, self.tr("Cenník (Flash)"), self.tr("Sadzba za 1 milión tokenov/znakov pre FLASH model (v $):"), self.flash_rate, 0, 1000, 6)
+            flash_price, ok2 = QInputDialog.getDouble(self, "Pricing (Flash)", "Rate per 1 million tokens/chars for FLASH model (in $):", self.flash_rate, 0, 1000, 6)
             if ok2:
                 self.flash_rate = flash_price
                 self.save_settings()
                 self.update_char_count_labels()
-                self.status_bar.showMessage(self.tr("Sadzby úspešne uložené."))
+                self.status_bar.showMessage("Rates successfully saved.")
             
     def insert_markup_tag_into_segment(self, tag: str, text_widget: QTextEdit):
         if text_widget:
@@ -1801,34 +1617,34 @@ class TTS_App(QMainWindow):
             cursor.movePosition(cursor.MoveOperation.End)
             text_widget.setTextCursor(cursor)
         else:
-             self.show_error_message("Nastala chyba: textové pole segmentu nebolo nájdené.")
+             self.show_error_message("An error occurred: segment text field not found.")
 
-    # --- VYLEPŠENÉ: MULTITASKING (bod 3) ---
+    # --- ENHANCED: MULTITASKING ---
     def start_generation(self, segment_index: int):
-        # --- NOVÉ: Kontrola existencie API kľúča ---
+        # --- NEW: Check if API key exists ---
         if not GEMINI_API_KEY:
-            self.show_error_message(self.tr("Gemini API kľúč nebol nájdený.\n\nNastavte ho v menu 'Nástroje' -> 'Nastaviť API kľúč...'."))
+            self.show_error_message("Gemini API key not found.\n\nSet it in menu 'Tools' -> 'Set API Key...'.")
             return
 
-        # Ak už beží dávkové generovanie, nerob nič
+        # If batch generation is running, do nothing
         if self.batch_thread and self.batch_thread.isRunning():
-            self.show_error_message(self.tr("Prebieha dávkové generovanie. Zrušte ho, ak chcete generovať iba jeden segment."))
+            self.show_error_message("Batch generation in progress. Cancel it to generate a single segment.")
             return
 
-        # Ak pre tento segment už beží generovanie, nerob nič
-        # ZMENA: Kontrola pre štandardné Python vlákno
+        # If generation is already running for this segment, do nothing
+        # CHANGE: Check for standard Python thread
         if segment_index in self.active_single_gen_threads and self.active_single_gen_threads[segment_index].is_alive():
-            self.status_bar.showMessage(self.tr("Generuje sa..."))
+            self.status_bar.showMessage("Generating...")
             return
 
         text_widget = self.segment_data[segment_index].get("text_widget")
         if not text_widget:
-            self.show_error_message(self.tr("Segment neobsahuje UI prvok textu."))
+            self.show_error_message("Segment does not contain text UI element.")
             return
 
         text_to_generate = text_widget.toPlainText().strip()
         if not text_to_generate:
-            self.show_error_message(self.tr("Segment neobsahuje text na generovanie."))
+            self.show_error_message("Segment contains no text to generate.")
             return
 
         self.set_segment_ui_enabled(segment_index, False)
@@ -1839,16 +1655,16 @@ class TTS_App(QMainWindow):
         style_prompt = self.style_prompt_input.toPlainText().strip()
         
         language_display_name = self.language_combo.currentText()
-        language_code = SUPPORTED_LANGUAGES.get(language_display_name, "sk-SK")
+        language_code = SUPPORTED_LANGUAGES.get(language_display_name, "en-US")
         speaking_rate = self.speed_slider.value() / 100.0
 
-        # --- VYLEPŠENÉ: Načítanie hlasu pre konkrétny segment ---
+        # --- ENHANCED: Load voice for specific segment ---
         segment_voice_combo = self.segments_container.findChild(QComboBox, f"voice_combo_{segment_index}")
         selected_voice = segment_voice_combo.currentData() if segment_voice_combo else self.gemini_voice_combo.currentData()
 
         waveform_label = self.segments_container.findChild(QLabel, f"waveform_label_{segment_index}")
         if waveform_label:
-            waveform_label.setText(f"Generuje sa...")
+            waveform_label.setText(f"Generating...")
             waveform_label.setPixmap(QPixmap())
 
         params = {
@@ -1861,24 +1677,24 @@ class TTS_App(QMainWindow):
             "speaking_rate": speaking_rate,
         }
 
-        # --- NOVÁ LOGIKA S POUŽITÍM threading.Thread ---
+        # --- NEW LOGIC USING threading.Thread ---
         
-        # 1. Vytvoríme objekt so signálmi
+        # 1. Create signals object
         signals = WorkerSignals()
         
-        # 2. Prepojíme signály s našimi metódami v hlavnom okne
+        # 2. Connect signals to methods in the main window
         signals.finished.connect(lambda result, idx=segment_index: self.on_generation_finished(result, idx))
         signals.error.connect(lambda error_msg, idx=segment_index: self.on_generation_error(error_msg, idx))
         
-        # 3. Vytvoríme inštanciu workera (už to nie je QObject)
+        # 3. Create worker instance (no longer a QObject)
         worker = GeminiWorker(params, signals)
         
-        # 4. Vytvoríme a spustíme štandardné Python vlákno
+        # 4. Create and start standard Python thread
         thread = Thread(target=worker.run, daemon=True)
-        # Uložíme referenciu na vlákno pre kontrolu stavu (is_alive)
+        # Store thread reference to check status (is_alive)
         self.active_single_gen_threads[segment_index] = thread
 
-        self.status_bar.showMessage(self.tr("Generujem reč (Segment {0})...").format(segment_index + 1))
+        self.status_bar.showMessage("Generating speech (Segment {0})...".format(segment_index + 1))
         thread.start()
 
     def on_generation_finished(self, result, segment_index):
@@ -1888,7 +1704,7 @@ class TTS_App(QMainWindow):
         in_tok = result.get("in_tokens", 0)
         out_tok = result.get("out_tokens", 0)
 
-        # ZMENA: Odstránime vlákno po dokončení
+        # CHANGE: Remove thread reference after completion
         self.active_single_gen_threads.pop(segment_index, None)
 
         self.in_tokens_count += in_tok
@@ -1896,7 +1712,7 @@ class TTS_App(QMainWindow):
 
         units = in_tok + out_tok if (in_tok + out_tok) > 0 else char_count
 
-        # Aktualizácia počítadla znakov a ceny
+        # Update character counter and cost
         if "pro" in model_used:
             self.pro_char_count += char_count
             self.total_cost += (units * self.pro_rate / 1000000.0)
@@ -1924,32 +1740,32 @@ class TTS_App(QMainWindow):
         self.full_audio_temp_path = None
         self.play_full_button.setEnabled(False)
         self.save_full_button.setEnabled(False)
-        self.full_waveform_label.setText(self.tr("Krivka: Zlúčte segmenty..."))
+        self.full_waveform_label.setText("Waveform: Merge segments...")
         self.full_waveform_label.setPixmap(QPixmap())
 
         can_merge = all(s.get("audio") is not None for s in self.segment_data)
         self.merge_segments_button.setEnabled(can_merge)
 
-        self.status_bar.showMessage(self.tr("Segment {0} vygenerovaný.").format(segment_index + 1))
+        self.status_bar.showMessage("Segment {0} generated.".format(segment_index + 1))
 
     def on_generation_error(self, error_message, segment_index):
         self.active_single_gen_threads.pop(segment_index, None)
 
         waveform_label = self.segments_container.findChild(QLabel, f"waveform_label_{segment_index}")
         if waveform_label:
-            waveform_label.setText(self.tr("Generovanie ZLYHALO."))
+            waveform_label.setText("Generation FAILED.")
             waveform_label.setPixmap(QPixmap())
 
         self.set_segment_ui_enabled(segment_index, True)
-        self.show_error_message(self.tr("Chyba pri generovaní segmentu {0}:\n{1}").format(segment_index + 1, error_message))
-        self.status_bar.showMessage(self.tr("Počas generovania segmentu {0} nastala chyba.").format(segment_index + 1))
+        self.show_error_message("Error generating segment {0}:\n{1}".format(segment_index + 1, error_message))
+        self.status_bar.showMessage("Error occurred during generation of segment {0}.".format(segment_index + 1))
 
     def cleanup_worker_and_thread(self):
          pass
 
     def start_batch_generation(self):
         if not GEMINI_API_KEY:
-            self.show_error_message(self.tr("Gemini API kľúč nebol nájdený.\n\nNastavte ho v menu 'Nástroje' -> 'Nastaviť API kľúč...'."))
+            self.show_error_message("Gemini API key not found.\n\nSet it in menu 'Tools' -> 'Set API Key...'.")
             return
 
         if self.batch_thread and self.batch_thread.isRunning():
@@ -1958,19 +1774,19 @@ class TTS_App(QMainWindow):
 
         active_single_threads = {k: v for k, v in self.active_single_gen_threads.items() if v.is_alive()}
         if active_single_threads:
-             self.show_error_message(self.tr("Prebieha generovanie jednotlivých segmentov. Dávkové generovanie nie je možné spustiť."))
+             self.show_error_message("Individual segments are generating. Batch generation cannot be started.")
              return
 
-        # Ak je zaškrtnuté použitie celého textu, automaticky aktualizujeme segment pred generovaním
+        # If use full text checkbox is checked, automatically update segment before generating
         if self.use_full_text_checkbox.isChecked():
             main_text = self.text_input.toPlainText().strip()
             if not main_text:
-                self.show_error_message(self.tr("Zadajte prosím text na spracovanie."))
+                self.show_error_message("Please enter text to process.")
                 return
             
             needs_split = True
             if len(self.segment_data) == 1:
-                # Skontroluj text_widget aj čistý text
+                # Check text_widget and plain text
                 current_segment_text = self.segment_data[0].get("text_widget").toPlainText().strip() if self.segment_data[0].get("text_widget") else self.segment_data[0].get("text", "")
                 if current_segment_text == main_text:
                     needs_split = False
@@ -1995,7 +1811,7 @@ class TTS_App(QMainWindow):
                      })
         
         if not segments_to_process:
-            self.show_error_message(self.tr("Všetky segmenty už majú vygenerované audio alebo sú prázdne."))
+            self.show_error_message("All segments already have audio generated or are empty.")
             return
 
         self.stop_all_audio()
@@ -2005,7 +1821,7 @@ class TTS_App(QMainWindow):
         model = GEMINI_TTS_MODELS.get(self.gemini_model_combo.currentText())
         
         language_display_name = self.language_combo.currentText()
-        language_code = SUPPORTED_LANGUAGES.get(language_display_name, "sk-SK")
+        language_code = SUPPORTED_LANGUAGES.get(language_display_name, "en-US")
         speaking_rate = self.speed_slider.value() / 100.0
 
         self.batch_thread = QThread()
@@ -2027,7 +1843,7 @@ class TTS_App(QMainWindow):
         self.batch_worker.status_update.connect(self.status_bar.showMessage)
 
         self.set_ui_enabled(False, batch_in_progress=True)
-        self.generate_all_button.setText(self.tr("◼ Zrušiť Generovanie"))
+        self.generate_all_button.setText("◼ Cancel Generation")
         try: self.generate_all_button.clicked.disconnect()
         except TypeError: pass
         self.generate_all_button.clicked.connect(self.cancel_batch_generation)
@@ -2036,17 +1852,17 @@ class TTS_App(QMainWindow):
             idx = s_info["original_index"]
             waveform_label = self.segments_container.findChild(QLabel, f"waveform_label_{idx}")
             if waveform_label:
-                waveform_label.setText(self.tr("Čaká sa..."))
+                waveform_label.setText("Waiting...")
                 waveform_label.setPixmap(QPixmap())
 
-        self.status_bar.showMessage(self.tr("Spúšťam dávkové generovanie {0} segmentov...").format(len(segments_to_process)))
+        self.status_bar.showMessage("Starting batch generation of {0} segments...".format(len(segments_to_process)))
         self.tabs.setCurrentIndex(1)
         self.batch_thread.start()
 
     def cancel_batch_generation(self):
         if self.batch_thread and self.batch_thread.isRunning() and self.batch_worker:
             self.batch_worker.cancel()
-            self.status_bar.showMessage(self.tr("Ruším generovanie..."))
+            self.status_bar.showMessage("Canceling generation...")
         else:
              self.set_ui_enabled(True)
 
@@ -2102,10 +1918,10 @@ class TTS_App(QMainWindow):
         self.set_ui_enabled(True)
 
         if not was_cancelled:
-            self.status_bar.showMessage(self.tr("Dávkové generovanie dokončené! Audio automaticky zlúčené."))
-            self.tabs.setCurrentIndex(2) # Prepni na finálny výstup
+            self.status_bar.showMessage("Batch generation complete! Audio merged automatically.")
+            self.tabs.setCurrentIndex(2) # Switch to final output
         else:
-            self.status_bar.showMessage(self.tr("Dávkové generovanie zrušené."))
+            self.status_bar.showMessage("Batch generation canceled.")
             can_merge = all(s.get("audio") is not None for s in self.segment_data)
             self.merge_segments_button.setEnabled(can_merge and len(self.segment_data) > 0)
 
@@ -2118,20 +1934,21 @@ class TTS_App(QMainWindow):
         self.batch_worker = None
 
         self.set_ui_enabled(True)
-        self.show_error_message(self.tr("Chyba dávkového generovania: {0}").format(message))
-        self.status_bar.showMessage(self.tr("Chyba: Dávkové generovanie zlyhalo."))
+        self.show_error_message("Batch generation error: {0}".format(message))
+        self.status_bar.showMessage("Error: Batch generation failed.")
 
     def new_project(self):
+        print("[INFO] Creating a new project (cleared text inputs and active segments).")
         if self.batch_thread and self.batch_thread.isRunning():
             self.cancel_batch_generation()
         if self.player.playbackState() != QMediaPlayer.PlaybackState.StoppedState:
             self.player.stop()
         
-        # ZMENA: Ukončenie všetkých bežiacich single-threads
+        # Terminate all running single-threads
         for index, thread in list(self.active_single_gen_threads.items()):
             if thread.is_alive():
-                 print(f"INFO: Ukončujem bežiaci single-thread pre segment {index+1} (daemon vlákno by malo skončiť po dokončení).")
-            # Odstránime záznam, hoci vlákno ešte môže chvíľu bežať
+                 print(f"INFO: Terminating running single-thread for segment {index+1} (daemon thread should exit upon completion).")
+            # Remove reference, even though thread might still run briefly
             del self.active_single_gen_threads[index]
 
         self.audio_content = None
@@ -2142,7 +1959,7 @@ class TTS_App(QMainWindow):
         self.style_prompt_input.clear()
         self.style_prompt_combo.setCurrentIndex(0)
         
-        # --- VYLEPŠENÉ: Reset počítadiel ---
+        # --- ENHANCED: Reset counters ---
         self.pro_char_count = 0
         self.flash_char_count = 0
         self.in_tokens_count = 0
@@ -2159,17 +1976,18 @@ class TTS_App(QMainWindow):
         self.generate_all_button.setEnabled(False)
         self.stop_all_button.setEnabled(False)
 
-        self.full_waveform_label.setText(self.tr("Krivka: Zlúčte segmenty..."))
+        self.full_waveform_label.setText("Waveform: Merge segments...")
         self.full_waveform_label.setPixmap(QPixmap())
-        self.status_bar.showMessage(self.tr("Vytvorený nový projekt."))
+        self.status_bar.showMessage("New project created.")
         self.tabs.setCurrentIndex(0)
 
     def save_project(self):
-        # --- ZMENA: Dialóg sa otvára v adresári /project ---
-        file_path, _ = QFileDialog.getSaveFileName(self, self.tr("Uložiť Projekt..."), PROJECTS_DIR, "Gemini TTS Project (*.gtts)")
+        # --- CHANGE: Dialog opens in the /project directory ---
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Project...", PROJECTS_DIR, "Gemini TTS Project (*.gtts)")
 
         if file_path:
             try:
+                print(f"[INFO] Saving project to: {file_path}...")
                 settings = {
                     "model_display_name": self.gemini_model_combo.currentText(),
                     "voice": self.gemini_voice_combo.currentData(),
@@ -2179,7 +1997,7 @@ class TTS_App(QMainWindow):
                     "full_text": self.text_input.toPlainText().strip(),
                     "language": self.language_combo.currentText(),
                     "speed": self.speed_slider.value(),
-                    # --- VYLEPŠENÉ: Uloženie počítadiel ---
+                    # --- ENHANCED: Save counters ---
                     "pro_chars": self.pro_char_count,
                     "flash_chars": self.flash_char_count,
                 }
@@ -2193,7 +2011,7 @@ class TTS_App(QMainWindow):
                 for i, data in enumerate(self.segment_data):
                     text = data.get("text_widget").toPlainText().strip() if data.get("text_widget") else data["text"]
                     
-                    # --- VYLEPŠENÉ: Získanie hlasu zo segmentu ---
+                    # --- ENHANCED: Get voice from segment ---
                     voice_combo = self.segments_container.findChild(QComboBox, f"voice_combo_{i}")
                     voice = voice_combo.currentData() if voice_combo else data["voice"]
                     
@@ -2210,16 +2028,19 @@ class TTS_App(QMainWindow):
 
                 with open(file_path, "w", encoding="utf-8") as f:
                     json.dump({"settings": settings, "segments": segments, "assets_dir_name": os.path.basename(assets_dir)}, f, indent=4)
-                self.status_bar.showMessage(self.tr("Projekt úspešne uložený do: {0}").format(file_path))
+                print(f"[SUCCESS] Project successfully saved to: {file_path}.")
+                self.status_bar.showMessage("Project saved successfully to: {0}".format(file_path))
             except Exception as e:
-                self.show_error_message(self.tr("Chyba pri ukladaní projektu: {0}").format(e))
+                print(f"[ERROR] Failed to save project to {file_path}: {e}")
+                self.show_error_message("Error saving project: {0}".format(e))
 
     def load_project(self):
-        # --- ZMENA: Dialóg sa otvára v adresári /project ---
-        file_path, _ = QFileDialog.getOpenFileName(self, self.tr("Načítať Projekt"), PROJECTS_DIR, "Gemini TTS Project (*.gtts)")
+        # --- CHANGE: Dialog opens in the /project directory ---
+        file_path, _ = QFileDialog.getOpenFileName(self, "Load Project", PROJECTS_DIR, "Gemini TTS Project (*.gtts)")
 
         if file_path:
             try:
+                print(f"[INFO] Loading project from: {file_path}...")
                 with open(file_path, "r", encoding="utf-8") as f:
                     project_data = json.load(f)
 
@@ -2242,8 +2063,8 @@ class TTS_App(QMainWindow):
                 self.style_prompt_input.setText(settings.get("prompt", ""))
                 current_prompt = settings.get("prompt", "")
                 if current_prompt in STYLE_PROMPT_OPTIONS.values():
-                    sk_key = [k for k, v in STYLE_PROMPT_OPTIONS.items() if v == current_prompt]
-                    if sk_key: self.style_prompt_combo.setCurrentText(sk_key[0])
+                    style_key = [k for k, v in STYLE_PROMPT_OPTIONS.items() if v == current_prompt]
+                    if style_key: self.style_prompt_combo.setCurrentText(style_key[0])
 
                 self.temp_slider.setValue(settings.get("temperature", 10))
                 self.segment_count_slider.setValue(settings.get("segment_count", 3))
@@ -2253,7 +2074,7 @@ class TTS_App(QMainWindow):
                     self.language_combo.setCurrentText(settings["language"])
                 self.speed_slider.setValue(settings.get("speed", 100))
                 
-                # --- VYLEPŠENÉ: Načítanie počítadiel ---
+                # --- ENHANCED: Load counters ---
                 self.pro_char_count = settings.get("pro_chars", 0)
                 self.flash_char_count = settings.get("flash_chars", 0)
                 self.update_char_count_labels()
@@ -2273,7 +2094,7 @@ class TTS_App(QMainWindow):
                                 with open(source_png, "rb") as f: png_data = f.read()
                                 temp_png_path = self.temp_file_manager.create_temp_file(".png", png_data)
                         
-                        # --- VYLEPŠENÉ: Načítanie hlasu pre segment ---
+                        # --- ENHANCED: Load voice for segment ---
                         segment_voice = s_info.get("voice", self.gemini_voice_combo.currentData())
                         new_segment_data.append({"text": text, "audio": audio_content, "audio_temp_path": temp_wav_path, "png_temp_path": temp_png_path, "text_widget": None, "voice": segment_voice})
                     
@@ -2288,20 +2109,48 @@ class TTS_App(QMainWindow):
                          self.tabs.setCurrentIndex(2)
                     else:
                          self.generate_all_button.setEnabled(True)
-                    self.status_bar.showMessage(self.tr("Projekt načítaný s {0} segmentmi.").format(len(self.segment_data)))
+                    print(f"[SUCCESS] Project loaded successfully with {len(self.segment_data)} segments.")
+                    self.status_bar.showMessage("Project loaded with {0} segments.".format(len(self.segment_data)))
                 else:
-                    self.status_bar.showMessage(self.tr("Projekt načítaný. Rozdeľte text na segmenty."))
+                    print("[SUCCESS] Project loaded successfully (empty segments list).")
+                    self.status_bar.showMessage("Project loaded. Split text into segments.")
             except Exception as e:
-                self.show_error_message(self.tr("Chyba pri načítaní projektu: {0}").format(e))
+                print(f"[ERROR] Failed to load project from {file_path}: {e}")
+                self.show_error_message("Error loading project: {0}".format(e))
                 self.new_project()
+
+    def import_txt_file(self):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Import TXT File", "", "Text Files (*.txt);;All Files (*)")
+        if file_path:
+            try:
+                print(f"[INFO] Importing text file: {file_path}...")
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                self.text_input.setText(content)
+                print(f"[SUCCESS] Text successfully imported from file: {file_path}.")
+                self.status_bar.showMessage("Text imported successfully from: {0}".format(os.path.basename(file_path)))
+            except UnicodeDecodeError:
+                try:
+                    with open(file_path, "r", encoding="cp1250") as f:
+                        content = f.read()
+                    self.text_input.setText(content)
+                    print(f"[SUCCESS] Text successfully imported from file (CP1250 encoding): {file_path}.")
+                    self.status_bar.showMessage("Text imported successfully from: {0}".format(os.path.basename(file_path)))
+                except Exception as e:
+                    print(f"[ERROR] Failed to import text file {file_path}: {e}")
+                    self.show_error_message("Error reading text file: {0}".format(e))
+            except Exception as e:
+                print(f"[ERROR] Failed to import text file {file_path}: {e}")
+                self.show_error_message("Error reading text file: {0}".format(e))
     
-    # --- UPRAVENÁ FUNKCIA ---
+    # --- MODIFIED FUNCTION ---
     def split_text_and_display(self):
         text = self.text_input.toPlainText().strip()
         if not text:
-            self.show_error_message(self.tr("Zadajte prosím text na spracovanie."))
+            self.show_error_message("Please enter text to process.")
             return
 
+        print(f"[INFO] Splitting text. Mode: {'Single segment' if self.use_full_text_checkbox.isChecked() else 'Sentence count split'}...")
         if self.batch_thread and self.batch_thread.isRunning():
             self.cancel_batch_generation()
 
@@ -2309,7 +2158,7 @@ class TTS_App(QMainWindow):
             self.player.stop()
 
         sentences = []
-        # --- ZMENA: Rozhodovanie podľa checkboxu ---
+        # --- CHANGE: Deciding based on checkbox ---
         if self.use_full_text_checkbox.isChecked():
             sentences.append(text)
         else:
@@ -2317,7 +2166,8 @@ class TTS_App(QMainWindow):
             sentences = _split_text_into_segments(text, sentences_per_segment)
 
         if not sentences:
-            self.show_error_message(self.tr("Text nebolo možné spracovať na segmenty."))
+            print("[ERROR] Could not process text into segments.")
+            self.show_error_message("Could not process text into segments.")
             return
 
         self.audio_content = None
@@ -2333,25 +2183,28 @@ class TTS_App(QMainWindow):
         self.save_full_button.setEnabled(False)
         self.generate_all_button.setEnabled(True)
 
-        self.full_waveform_label.setText(self.tr("Krivka: Zlúčte segmenty..."))
+        self.full_waveform_label.setText("Waveform: Merge segments...")
         self.full_waveform_label.setPixmap(QPixmap())
         
         if self.use_full_text_checkbox.isChecked():
-            self.status_bar.showMessage(self.tr("Vytvorený 1 segment z celého textu."))
+            print("[SUCCESS] Split completed. Created 1 segment from the full text.")
+            self.status_bar.showMessage("Created 1 segment from the full text.")
         else:
-            self.status_bar.showMessage(self.tr("Text rozdelený na {0} segmentov.").format(len(self.segment_data)))
+            print(f"[SUCCESS] Split completed. Text split into {len(self.segment_data)} segments.")
+            self.status_bar.showMessage("Text split into {0} segments.".format(len(self.segment_data)))
         
-        self.tabs.setCurrentIndex(1) # Automaticky prepni na kartu so segmentmi
+        self.tabs.setCurrentIndex(1) # Automatically switch to segments tab
 
 
     def delete_segment(self, index: int):
         if 0 <= index < len(self.segment_data):
+            print(f"[INFO] Deleting segment {index + 1}...")
             if self.player.source().isLocalFile() and self.player.source().toLocalFile() == self.segment_data[index].get("audio_temp_path"):
                 self.player.stop()
             
-            # ZMENA: Zastavenie single-thread
+            # CHANGE: Stop single-thread
             if index in self.active_single_gen_threads and self.active_single_gen_threads[index].is_alive():
-                # Demon vlákno skončí samo, len odstránime referenciu, aby UI nečakalo
+                # Daemon thread will exit itself, just remove reference so UI doesn't wait
                  del self.active_single_gen_threads[index] 
                  
             del self.segment_data[index]
@@ -2362,12 +2215,13 @@ class TTS_App(QMainWindow):
             self.full_audio_temp_path = None
             self.play_full_button.setEnabled(False)
             self.save_full_button.setEnabled(False)
-            self.full_waveform_label.setText(self.tr("Krivka: Zlúčte segmenty..."))
+            self.full_waveform_label.setText("Waveform: Merge segments...")
             self.full_waveform_label.setPixmap(QPixmap())
             self.display_segments()
             can_merge = all(s.get("audio") for s in self.segment_data)
             self.merge_segments_button.setEnabled(can_merge and len(self.segment_data) > 0)
-            self.status_bar.showMessage(self.tr("Segment zmazaný. Ostáva {0} segmentov.").format(len(self.segment_data)))
+            print(f"[SUCCESS] Segment deleted. {len(self.segment_data)} segments remaining.")
+            self.status_bar.showMessage("Segment deleted. {0} segments remaining.".format(len(self.segment_data)))
 
     def display_segments(self):
         while self.segments_layout.count():
@@ -2383,7 +2237,7 @@ class TTS_App(QMainWindow):
             segment_widget.setObjectName("SegmentRow")
             segment_grid = QGridLayout(segment_widget)
 
-            # --- VYLEPŠENÉ: Vertikálne tlačidlá na posun ---
+            # --- ENHANCED: Vertical move buttons ---
             move_buttons_layout = QVBoxLayout()
             up_button = QPushButton("▲")
             up_button.setObjectName(f"up_button_{i}")
@@ -2406,12 +2260,12 @@ class TTS_App(QMainWindow):
             text_input = CustomTextEdit()
             text_input.focus_in_signal.connect(self.set_active_text_widget)
             text_input.setText(data["text"])
-            text_input.setFixedHeight(110) # Fixná výška na približne 5 riadkov
+            text_input.setFixedHeight(110) # Fixed height for approx 5 lines
             text_input.setObjectName(f"text_input_segment_{i}")
             self.segment_data[i]["text_widget"] = text_input
             segment_grid.addWidget(text_input, 0, 2, 1, 2)
 
-            waveform_label = QLabel(self.tr("Krivka nevygenerovaná"))
+            waveform_label = QLabel("Waveform not generated")
             waveform_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             waveform_label.setObjectName(f"waveform_label_{i}")
             waveform_label.setMinimumHeight(60)
@@ -2424,7 +2278,7 @@ class TTS_App(QMainWindow):
             segment_grid.addWidget(waveform_label, 1, 2)
 
             control_layout = QHBoxLayout()
-            tag_button = QPushButton(self.tr("🏷️ Vložiť Tag"));
+            tag_button = QPushButton("Insert Tag");
             tag_menu = QMenu(self)
             for group_name, tags in MARKUP_TAGS.items():
                 group_menu = tag_menu.addMenu(group_name)
@@ -2436,7 +2290,7 @@ class TTS_App(QMainWindow):
             tag_button.setMenu(tag_menu)
             control_layout.addWidget(tag_button)
 
-            # --- VYLEPŠENÉ: Výber hlasu pre segment ---
+            # --- ENHANCED: Voice selection for segment ---
             voice_combo = QComboBox()
             voice_combo.setObjectName(f"voice_combo_{i}")
             for voice, gender in GEMINI_VOICE_INFO.items():
@@ -2450,13 +2304,13 @@ class TTS_App(QMainWindow):
             segment_grid.addWidget(voice_combo, 2, 2)
 
 
-            gen_button = QPushButton(self.tr("🔊 Generovať")); gen_button.clicked.connect(lambda checked, idx=i: self.start_generation(segment_index=idx)); gen_button.setObjectName(f"gen_button_{i}"); control_layout.addWidget(gen_button)
-            play_button = QPushButton(self.tr("▶ Prehrať")); play_button.setEnabled(data.get("audio") is not None); play_button.setObjectName(f"play_button_{i}"); play_button.clicked.connect(lambda checked, idx=i: self.play_segment_audio(idx)); control_layout.addWidget(play_button)
+            gen_button = QPushButton("🔊 Generate"); gen_button.clicked.connect(lambda checked, idx=i: self.start_generation(segment_index=idx)); gen_button.setObjectName(f"gen_button_{i}"); control_layout.addWidget(gen_button)
+            play_button = QPushButton("▶ Play"); play_button.setEnabled(data.get("audio") is not None); play_button.setObjectName(f"play_button_{i}"); play_button.clicked.connect(lambda checked, idx=i: self.play_segment_audio(idx)); control_layout.addWidget(play_button)
             
-            # --- VYLEPŠENÉ: Pridané tlačidlo na ticho ---
-            silence_button = QPushButton(self.tr("🔇 Ticho")); silence_button.setObjectName(f"silence_button_{i}"); silence_button.clicked.connect(lambda checked, idx=i: self.add_silence_to_segment(idx)); control_layout.addWidget(silence_button)
+            # --- ENHANCED: Added silence button ---
+            silence_button = QPushButton("🔇 Silence"); silence_button.setObjectName(f"silence_button_{i}"); silence_button.clicked.connect(lambda checked, idx=i: self.add_silence_to_segment(idx)); control_layout.addWidget(silence_button)
             
-            delete_button = QPushButton(self.tr("🗑 Zmazať")); delete_button.setObjectName(f"delete_button_{i}"); delete_button.clicked.connect(lambda checked, idx=i: self.delete_segment(idx)); control_layout.addWidget(delete_button)
+            delete_button = QPushButton("🗑 Delete"); delete_button.setObjectName(f"delete_button_{i}"); delete_button.clicked.connect(lambda checked, idx=i: self.delete_segment(idx)); control_layout.addWidget(delete_button)
 
             segment_grid.addLayout(control_layout, 1, 3, Qt.AlignmentFlag.AlignVCenter)
             segment_grid.setColumnStretch(2, 3)
@@ -2465,13 +2319,13 @@ class TTS_App(QMainWindow):
             self.segments_layout.addWidget(segment_widget)
             
     def on_segment_voice_changed(self, index):
-        """Uloží zmenu hlasu do dátovej štruktúry segmentu."""
+        """Stores the voice change in the segment data structure."""
         voice_combo = self.segments_container.findChild(QComboBox, f"voice_combo_{index}")
         if voice_combo:
             self.segment_data[index]["voice"] = voice_combo.currentData()
 
     def play_voice_preview(self):
-        """Dynamicky vygeneruje a prehrá ukážku vybraného hlasu, alebo prehrá z trvalej cache."""
+        """Dynamically generates and plays preview of selected voice, or plays from cache."""
         voice_name = self.gemini_voice_combo.currentData()
         
         # Check if we already have it in persistent cache (VOICES_DIR)
@@ -2491,30 +2345,33 @@ class TTS_App(QMainWindow):
 
         if is_playing_this_preview:
             self.player.stop()
-            self.status_bar.showMessage(self.tr("Prehrávanie ukážky zastavené."))
+            print(f"[INFO] Voice preview playback stopped for voice: {voice_name}.")
+            self.status_bar.showMessage("Preview playback stopped.")
             return
 
         if os.path.exists(preview_path):
             self.player.stop()
             self.player.setSource(QUrl.fromLocalFile(preview_path))
             self.player.play()
-            self.status_bar.showMessage(self.tr("Prehrávam lokálnu ukážku hlasu: {0}...").format(voice_name))
+            print(f"[INFO] Playing local cached voice preview for: {voice_name}...")
+            self.status_bar.showMessage("Playing local voice preview: {0}...".format(voice_name))
             return
 
         # If we need to generate:
         if not GEMINI_API_KEY:
-            self.show_error_message(self.tr("Gemini API kľúč nebol nájdený.\n\nNastavte ho v menu 'Nástroje' -> 'Nastaviť API kľúč...'."))
+            self.show_error_message("Gemini API key not found.\n\nSet it in menu 'Tools' -> 'Set API Key...'.")
             return
 
         if self.active_preview_thread and self.active_preview_thread.is_alive():
-            self.status_bar.showMessage(self.tr("Generujem..."))
+            self.status_bar.showMessage("Generating...")
             return
 
         self.voice_preview_button.setEnabled(False)
-        self.voice_preview_button.setText(self.tr("Generujem..."))
-        self.status_bar.showMessage(self.tr("Generujem ukážku hlasu: {0}...").format(voice_name))
+        self.voice_preview_button.setText("Generating...")
+        print(f"[INFO] Voice preview cache not found. Generating preview for: {voice_name}...")
+        self.status_bar.showMessage("Generating voice preview: {0}...".format(voice_name))
 
-        # Dynamická tvorba textu podľa jazyka
+        # Dynamic text based on language
         preview_text = "Hello, this is a preview of my voice. I am ready to read your text."
 
         selected_model_display_name = self.gemini_model_combo.currentText()
@@ -2551,39 +2408,42 @@ class TTS_App(QMainWindow):
             with open(audio_path, "wb") as f:
                 f.write(audio_content)
         except Exception as e:
-            self.show_error_message(self.tr("Chyba pri ukladaní ukážky: {0}").format(e))
+            print(f"[ERROR] Failed to save voice preview for {voice_name}: {e}")
+            self.show_error_message("Error saving preview: {0}".format(e))
             self.voice_preview_button.setEnabled(True)
-            self.voice_preview_button.setText(self.tr("🔊 Ukážka"))
+            self.voice_preview_button.setText("🔊 Preview")
             return
             
         self.voice_preview_button.setEnabled(True)
-        self.voice_preview_button.setText(self.tr("🔊 Ukážka"))
+        self.voice_preview_button.setText("🔊 Preview")
         
         self.player.stop()
         self.player.setSource(QUrl.fromLocalFile(audio_path))
         self.player.play()
-        self.status_bar.showMessage(self.tr("Prehrávam lokálnu ukážku hlasu: {0}...").format(voice_name))
+        print(f"[SUCCESS] Voice preview successfully generated and cached for voice: {voice_name}.")
+        self.status_bar.showMessage("Playing local voice preview: {0}...".format(voice_name))
 
     def on_preview_error(self, error_msg):
         self.voice_preview_button.setEnabled(True)
-        self.voice_preview_button.setText(self.tr("🔊 Ukážka"))
-        self.show_error_message(self.tr("Chyba pri generovaní ukážky hlasu:\n{0}").format(error_msg))
-        self.status_bar.showMessage(self.tr("Chyba pri generovaní ukážky hlasu."))
+        self.voice_preview_button.setText("🔊 Preview")
+        print(f"[ERROR] Voice preview generation failed: {error_msg}")
+        self.show_error_message("Error generating voice preview:\n{0}".format(error_msg))
+        self.status_bar.showMessage("Error generating voice preview.")
 
-    # ODSTRÁNENÉ: Metódy on_preview_download_finished a on_preview_download_error
+    # REMOVED: Methods on_preview_download_finished and on_preview_download_error
 
     def play_segment_audio(self, index: int):
-        """Prehrá alebo zastaví audio vybraného segmentu."""
+        """Plays or stops audio of the selected segment."""
         audio_path = self.segment_data[index].get("audio_temp_path")
         if not audio_path:
-            self.show_error_message(self.tr("Audio pre tento segment nebolo vygenerované."))
+            self.show_error_message("Audio for this segment has not been generated.")
             return
 
         current_source_path = ""
         if self.player.source().isLocalFile():
             current_source_path = self.player.source().toLocalFile()
 
-        # OPRAVA: Použitie os.path.normpath pre spoľahlivé porovnanie ciest
+        # FIX: Using os.path.normpath for reliable comparison of paths
         is_playing_this = (
             self.player.playbackState() == QMediaPlayer.PlaybackState.PlayingState and
             os.path.normpath(current_source_path) == os.path.normpath(audio_path)
@@ -2591,19 +2451,22 @@ class TTS_App(QMainWindow):
 
         if is_playing_this:
             self.player.stop()
+            print(f"[INFO] Stopped audio playback for segment {index + 1}.")
         else:
-            self.player.stop() # Najprv zastaví čokoľvek, čo sa prehráva
+            self.player.stop() # Stop whatever is currently playing first
             self.player.setSource(QUrl.fromLocalFile(audio_path))
             self.player.play()
-            self.status_bar.showMessage(self.tr("Prehrávam segment {0}...").format(index + 1))
+            print(f"[INFO] Playing audio for segment {index + 1}...")
+            self.status_bar.showMessage("Playing segment {0}...".format(index + 1))
 
     def merge_segments_audio(self):
         if not self.segment_data: return
         audio_chunks = [s.get("audio") for s in self.segment_data]
         if any(chunk is None for chunk in audio_chunks):
-            self.show_error_message(self.tr("Nie všetky segmenty majú vygenerované audio."))
+            self.show_error_message("Not all segments have generated audio.")
             return
 
+        print("[INFO] Starting audio segments merge...")
         self.set_ui_enabled(False)
         try:
             all_frames, sample_rate, nchannels, sampwidth = [], -1, -1, -1
@@ -2612,7 +2475,7 @@ class TTS_App(QMainWindow):
                     if sample_rate == -1:
                         sample_rate, nchannels, sampwidth = raw.getframerate(), raw.getnchannels(), raw.getsampwidth()
                     elif (raw.getframerate() != sample_rate or raw.getnchannels() != nchannels or raw.getsampwidth() != sampwidth):
-                        raise ValueError(f"Segment {i+1} má nekonzistentné audio parametre.")
+                        raise ValueError(f"Segment {i+1} has inconsistent audio parameters.")
                     all_frames.append(raw.readframes(raw.getnframes()))
 
             output_wav_buffer = io.BytesIO()
@@ -2631,17 +2494,19 @@ class TTS_App(QMainWindow):
             self.play_full_button.setEnabled(True)
             self.save_full_button.setEnabled(True)
             self.merge_segments_button.setEnabled(False)
-            self.status_bar.showMessage(self.tr("Segmenty úspešne zlúčené!"))
+            print("[SUCCESS] Audio segments merged successfully.")
+            self.status_bar.showMessage("Segments merged successfully!")
         except Exception as e:
-            self.show_error_message(self.tr("Chyba pri zlúčení audio segmentov: {0}").format(e))
+            print(f"[ERROR] Failed to merge audio segments: {e}")
+            self.show_error_message("Error merging audio segments: {0}".format(e))
         finally:
             self.set_ui_enabled(True)
 
 
     def media_player_error(self, error, error_string):
         if error != QMediaPlayer.Error.NoError:
-            self.show_error_message(self.tr("Chyba prehrávača: {0}").format(error_string))
-            self.status_bar.showMessage(self.tr("Chyba prehrávača."))
+            self.show_error_message("Player error: {0}".format(error_string))
+            self.status_bar.showMessage("Player error.")
             self.set_ui_enabled(True)
 
     def play_full_audio(self):
@@ -2654,42 +2519,48 @@ class TTS_App(QMainWindow):
 
         if is_playing_full:
             self.player.stop()
+            print("[INFO] Stopped playing full merged audio.")
         else:
             self.player.stop()
             self.player.setSource(QUrl.fromLocalFile(self.full_audio_temp_path))
             self.player.play()
-            self.status_bar.showMessage(self.tr("Prehrávam finálny zvuk..."))
+            print("[INFO] Playing final merged audio...")
+            self.status_bar.showMessage("Playing final audio...")
 
     def stop_all_audio(self):
         if self.player.playbackState() != QMediaPlayer.PlaybackState.StoppedState:
             self.player.stop()
-            self.status_bar.showMessage(self.tr("Prehrávanie zastavené."))
+            print("[INFO] Audio playback stopped.")
+            self.status_bar.showMessage("Playback stopped.")
         if not (self.batch_thread and self.batch_thread.isRunning()):
             self.set_ui_enabled(True)
 
     def save_audio(self):
         if not self.audio_content:
-            self.show_error_message(self.tr("Žiadny zvuk na uloženie. Najprv zlúčte segmenty."))
+            self.show_error_message("No audio to save. Merge segments first.")
             return
-        file_path, _ = QFileDialog.getSaveFileName(self, self.tr("Uložiť Audio Súbor"), "gemini_output.wav", "Audio Files (*.wav *.mp3);;WAV Audio Files (*.wav);;MP3 Audio Files (*.mp3)")
+        file_path, _ = QFileDialog.getSaveFileName(self, "Save Audio File", "gemini_output.wav", "Audio Files (*.wav *.mp3);;WAV Audio Files (*.wav);;MP3 Audio Files (*.mp3)")
         if file_path:
             try:
+                print(f"[INFO] Exporting final audio to: {file_path}...")
                 if file_path.lower().endswith(".mp3"):
                     if AudioSegment is None:
-                        self.show_error_message(self.tr("Pre ukladanie do MP3 je potrebné nainštalovať knižnicu pydub a FFmpeg.\nOtvorte terminál a zadajte: pip install pydub"))
+                        self.show_error_message("To save to MP3, you need to install the pydub library and FFmpeg.\nOpen terminal and run: pip install pydub")
                         return
                     audio = AudioSegment.from_wav(io.BytesIO(self.audio_content))
                     audio.export(file_path, format="mp3", bitrate="192k")
                 else:
                     with open(file_path, "wb") as out:
                         out.write(self.audio_content)
-                self.status_bar.showMessage(self.tr("Súbor úspešne uložený: {0}").format(file_path))
+                print(f"[SUCCESS] Audio successfully exported to: {file_path}.")
+                self.status_bar.showMessage("File saved successfully: {0}".format(file_path))
             except Exception as e:
-                self.show_error_message(self.tr("Chyba pri ukladaní súboru: {0}").format(e))
+                print(f"[ERROR] Failed to save audio file to {file_path}: {e}")
+                self.show_error_message("Error saving file: {0}".format(e))
 
-    # --- VYLEPŠENÉ: Granulárne ovládanie UI pre multitasking ---
+    # --- ENHANCED: Granular UI control for multitasking ---
     def set_segment_ui_enabled(self, index: int, enabled: bool):
-        """Zapne/vypne UI prvky pre JEDEN segment."""
+        """Enables/disables UI elements for ONE segment."""
         gen_button = self.segments_container.findChild(QPushButton, f"gen_button_{index}")
         silence_button = self.segments_container.findChild(QPushButton, f"silence_button_{index}")
         delete_button = self.segments_container.findChild(QPushButton, f"delete_button_{index}")
@@ -2698,11 +2569,11 @@ class TTS_App(QMainWindow):
 
         if gen_button:
             gen_button.setEnabled(enabled)
-            # ZMENA: Kontrola, či už nebeží generovanie (pre istotu)
+            # Check if generation is running (just in case)
             if index in self.active_single_gen_threads and self.active_single_gen_threads[index].is_alive():
-                 gen_button.setText(self.tr("⏳..."))
+                 gen_button.setText("⏳...")
             else:
-                 gen_button.setText(self.tr("🔊 Generovať") if enabled else self.tr("⏳..."))
+                 gen_button.setText("🔊 Generate" if enabled else "⏳...")
                  
         if silence_button: silence_button.setEnabled(enabled)
         if delete_button: delete_button.setEnabled(enabled)
@@ -2724,12 +2595,13 @@ class TTS_App(QMainWindow):
         self.segment_count_slider.setEnabled(enabled and not self.use_full_text_checkbox.isChecked())
         self.use_full_text_checkbox.setEnabled(enabled)
         self.text_input.setEnabled(enabled)
+        self.import_button.setEnabled(enabled)
         self.split_button.setEnabled(enabled)
         self.add_segment_button.setEnabled(enabled)
 
         self.generate_all_button.setEnabled(enabled and len(self.segment_data) > 0)
         if enabled:
-            self.generate_all_button.setText(self.tr("Generovať VŠETKY Segmenty"))
+            self.generate_all_button.setText("Generate ALL Segments")
             try: self.generate_all_button.clicked.disconnect()
             except: pass
             self.generate_all_button.clicked.connect(self.start_batch_generation)
@@ -2741,10 +2613,10 @@ class TTS_App(QMainWindow):
         self.save_full_button.setEnabled(enabled and is_merged)
 
         for i, data in enumerate(self.segment_data):
-            # ZMENA: Kontrola, či beží single-thread
+            # Check if single-thread is running
             is_single_generating = i in self.active_single_gen_threads and self.active_single_gen_threads[i].is_alive()
             
-            # Ak beží generovanie pre tento segment, necháme ho vypnutý
+            # If generating, keep it disabled
             if is_single_generating:
                 self.set_segment_ui_enabled(i, False)
                 continue
@@ -2753,7 +2625,7 @@ class TTS_App(QMainWindow):
             play_button = self.get_segment_play_button(i)
             if play_button: play_button.setEnabled(enabled and data.get("audio") is not None)
             
-            # Tlačidlá na posun
+            # Move buttons
             up_button = self.segments_container.findChild(QPushButton, f"up_button_{i}")
             down_button = self.segments_container.findChild(QPushButton, f"down_button_{i}")
             if up_button: up_button.setEnabled(enabled and i > 0)
@@ -2762,7 +2634,7 @@ class TTS_App(QMainWindow):
 
         if batch_in_progress:
             self.set_ui_enabled(False)
-            self.generate_all_button.setEnabled(True) # Tlačidlo na zrušenie musí ostať aktívne
+            self.generate_all_button.setEnabled(True) # Cancel button must remain active
             self.stop_all_button.setEnabled(True)
 
     def closeEvent(self, event):
@@ -2772,11 +2644,7 @@ class TTS_App(QMainWindow):
              self.batch_worker.cancel()
              self.batch_thread.quit()
              self.batch_thread.wait()
-        # ZMENA: Daemon vlákna sa ukončia samé pri ukončení hlavného procesu
-        # for thread in self.active_single_gen_threads.values():
-        #     if thread.is_alive():
-        #         # Ak by sme chceli robustné zrušenie, museli by sme pridať cancel mechanizmus
-        #         pass 
+        # Daemon threads will terminate automatically on process exit
         self.temp_file_manager.cleanup()
         event.accept()
 
@@ -2785,47 +2653,47 @@ class TTS_App(QMainWindow):
         msg_box.setStyleSheet("background-color: #3c3c3c; color: #f0f0f0;")
         msg_box.setIcon(QMessageBox.Icon.Critical)
         msg_box.setText(str(message))
-        msg_box.setWindowTitle("Chyba")
+        msg_box.setWindowTitle("Error")
         msg_box.exec()
         
-    # --- NOVÉ FUNKCIE ---
+    # --- NEW FUNCTIONS ---
 
     def toggle_segmentation_controls(self):
-        """Prepína stav ovládacích prvkov segmentácie na základe checkboxu."""
+        """Toggles segmentation control elements based on checkbox state."""
         is_checked = self.use_full_text_checkbox.isChecked()
         self.segment_count_slider.setEnabled(not is_checked)
         self.segment_count_label.setEnabled(not is_checked)
         if is_checked:
-            self.split_button.setText("📝 Vytvoriť jeden segment")
-            self.split_button.setToolTip("Vytvorí jeden segment z celého hlavného textu.")
+            self.split_button.setText("Create single segment")
+            self.split_button.setToolTip("Creates one segment from the entire main text.")
             self.generate_all_button.setEnabled(True)
         else:
-            self.split_button.setText("✂ Rozdeliť text na segmenty")
-            # Aktualizuje tooltip podľa aktuálnej hodnoty slidera
+            self.split_button.setText("Split text into segments")
+            # Update tooltip based on current slider value
             self.update_split_button_on_slider_change(self.segment_count_slider.value())
             self.generate_all_button.setEnabled(len(self.segment_data) > 0)
             
     def update_split_button_on_slider_change(self, value):
-        """Aktualizuje label a tooltip pri zmene hodnoty slidera."""
-        self.segment_count_label.setText(f"Viet/Segment: {value}")
-        # Tooltip sa mení, len ak nie je zaškrtnutá možnosť jedného segmentu
+        """Updates label and tooltip when slider value changes."""
+        self.segment_count_label.setText(f"Sentences/Seg.: {value}")
+        # Only change tooltip if single segment checkbox is not checked
         if not self.use_full_text_checkbox.isChecked():
-             self.split_button.setToolTip(f"Rozdelí hlavný text na segmenty po {value} vety.")
+             self.split_button.setToolTip(f"Splits the main text into segments of {value} sentences.")
 
     def update_char_count_labels(self):
-        """Aktualizuje zobrazenie počtu znakov v stavovom riadku."""
+        """Updates character counts in status bar."""
         self.pro_char_label.setText(f"Pro Chars: {self.pro_char_count}")
         self.flash_char_label.setText(f"Flash Chars: {self.flash_char_count}")
         self.tokens_label.setText(f"In/Out Tokens: {self.in_tokens_count}/{self.out_tokens_count}")
-        self.cost_label.setText(f"Cena: ${self.total_cost:.6f}")
+        self.cost_label.setText(f"Cost: ${self.total_cost:.6f}")
 
     def generate_silence_wav(self, duration_s: int, sample_rate: int = 24000, bits_per_sample: int = 16) -> bytes:
-        """Generuje WAV dáta pre ticho zadanej dĺžky."""
+        """Generates WAV data for silence of specified duration."""
         num_channels = 1
         bytes_per_sample = bits_per_sample // 8
         num_frames = int(duration_s * sample_rate)
         
-        # Tiché dáta (nulové bajty)
+        # Silent data (zero bytes)
         audio_data = b'\x00' * (num_frames * num_channels * bytes_per_sample)
         
         output_buffer = io.BytesIO()
@@ -2838,30 +2706,31 @@ class TTS_App(QMainWindow):
         return output_buffer.getvalue()
 
     def add_silence_to_segment(self, index: int):
-        """Zobrazí dialóg a pridá ticho do segmentu."""
-        duration, ok = QInputDialog.getInt(self, "Vložiť Ticho", "Zadajte dĺžku ticha v sekundách:", 1, 1, 10, 1)
+        """Shows dialog and inserts silence into segment."""
+        duration, ok = QInputDialog.getInt(self, "Insert Silence", "Enter silence duration in seconds:", 1, 1, 10, 1)
         if ok:
-            # Zastav prehrávanie, ak sa prehráva práve tento segment
+            print(f"[INFO] Inserting {duration} seconds of silence into segment {index + 1}...")
+            # Stop playback if currently playing this segment
             if self.player.source().isLocalFile() and self.player.source().toLocalFile() == self.segment_data[index].get("audio_temp_path"):
                 self.player.stop()
             
-            # ZMENA: Ak beží generovanie, zastav ho (len odstránime referenciu)
+            # If generating, stop it (remove reference)
             if index in self.active_single_gen_threads and self.active_single_gen_threads[index].is_alive():
-                 del self.active_single_gen_threads[index] 
-                 self.set_segment_ui_enabled(index, True) # Reset UI
+                  del self.active_single_gen_threads[index] 
+                  self.set_segment_ui_enabled(index, True) # Reset UI
 
-            # Vygeneruj ticho
+            # Generate silence
             audio_content = self.generate_silence_wav(duration)
             self.segment_data[index]["audio"] = audio_content
             audio_path = self.temp_file_manager.create_temp_file(".wav", audio_content)
             self.segment_data[index]["audio_temp_path"] = audio_path
             
-            # Vytvor "waveform" pre ticho (plochá čiara)
-            png_data = create_waveform_png_data(b'', width=800, height=70) # Prázdne dáta vygenerujú čiaru
+            # Create flat waveform for silence
+            png_data = create_waveform_png_data(b'', width=800, height=70) # Empty data generates flat line
             png_path = self.temp_file_manager.create_temp_file(".png", png_data)
             self.segment_data[index]["png_temp_path"] = png_path
             
-            # Aktualizuj UI
+            # Update UI
             self.update_segment_waveform(index, png_path)
             play_button = self.get_segment_play_button(index)
             play_button.setEnabled(True)
@@ -2870,11 +2739,12 @@ class TTS_App(QMainWindow):
             can_merge = all(s.get("audio") for s in self.segment_data)
             self.merge_segments_button.setEnabled(can_merge)
             
-            self.status_bar.showMessage(f"Do segmentu {index + 1} vložené {duration}s ticho.")
+            print(f"[SUCCESS] Silence of {duration}s inserted into segment {index + 1}.")
+            self.status_bar.showMessage(f"Inserted {duration}s silence into segment {index + 1}.")
 
 
     def add_new_segment(self):
-        """Vloží nový prázdny segment do zoznamu."""
+        """Inserts a new empty segment into list."""
         default_voice = self.gemini_voice_combo.currentData()
         new_segment = {
             "text": "",
@@ -2887,19 +2757,22 @@ class TTS_App(QMainWindow):
         self.segment_data.append(new_segment)
         self.display_segments()
         self.generate_all_button.setEnabled(True)
-        self.status_bar.showMessage(f"Pridaný nový segment. Celkovo: {len(self.segment_data)}.")
+        print(f"[INFO] Inserted a new empty segment at index {len(self.segment_data)}.")
+        self.status_bar.showMessage(f"Added new segment. Total: {len(self.segment_data)}.")
 
 
     def move_segment_up(self, index: int):
-        """Posunie segment o jednu pozíciu hore."""
+        """Moves segment up by one position."""
         if index > 0:
+            print(f"[INFO] Moving segment {index + 1} UP to index {index}...")
             self.segment_data.insert(index - 1, self.segment_data.pop(index))
             self.display_segments()
 
 
     def move_segment_down(self, index: int):
-        """Posunie segment o jednu pozíciu dole."""
+        """Moves segment down by one position."""
         if index < len(self.segment_data) - 1:
+            print(f"[INFO] Moving segment {index + 1} DOWN to index {index + 2}...")
             self.segment_data.insert(index + 1, self.segment_data.pop(index))
             self.display_segments()
 
