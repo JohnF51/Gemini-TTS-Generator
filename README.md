@@ -74,7 +74,7 @@ A powerful, PyQt6-based desktop application that leverages Google's Gemini 3.1 A
    - Once all segments are generated, click **➕ Merge Segments** to create the final audio file.
    - Save the final output as a `.wav` file.
 
-<audio src="assets/sample.mp3" controls></audio>
+### 🔊 [Listen to Sample Audio (MP3)](https://github.com/JohnF51/Gemini-TTS-Generator/blob/main/assets/sample.mp3?raw=true)
 
 ## 🔐 Security Note
 
