@@ -33,25 +33,26 @@ A powerful, PyQt6-based desktop application that leverages Google's Gemini 2.5 A
    cd Gemini-TTS-Generator
    ```
 
-2. **Create a virtual environment (Recommended):**
+2. **Create a virtual environment & install dependencies (using [uv](https://github.com/astral-sh/uv)):**
    ```bash
-   python -m venv .venv
-   # Activate the environment:
+   uv venv
+   uv pip install -r requirements.txt
+   ```
+   *(Note: The `stanza` library will download its language models automatically on the first run when splitting text.)*
+
+3. **Activate the environment:**
+   ```bash
    # On Windows:
    .venv\Scripts\activate
    ```
-
-3. **Install the dependencies:**
-   ```bash
-   pip install -r requirements.txt
-   ```
-   *(Note: The `stanza` library will download its language models automatically on the first run when splitting text.)*
 
 ## 🚀 Usage
 
 1. **Start the application:**
    ```bash
    python Gemini_TTS.py
+   # Or using uv directly without activating:
+   # uv run Gemini_TTS.py
    ```
 
 2. **Set your API Key:**
