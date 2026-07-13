@@ -1,6 +1,6 @@
 # Gemini TTS Generator
 
-A powerful, PyQt6-based desktop application that leverages Google's Gemini 2.5 API (multimodal audio generation) to perform high-quality, long-form Text-to-Speech (TTS). It includes advanced features like intelligent text segmentation, multithreaded generation, a granular audio segment editor, and a built-in token/cost calculator.
+A powerful, PyQt6-based desktop application that leverages Google's Gemini 3.1 API (multimodal audio generation) to perform high-quality, long-form Text-to-Speech (TTS). It includes advanced features like intelligent text segmentation, multithreaded generation, a granular audio segment editor, and a built-in token/cost calculator.
 
 ![App Screenshot](assets/001.png)
 
@@ -73,6 +73,8 @@ A powerful, PyQt6-based desktop application that leverages Google's Gemini 2.5 A
    - Click ** Generate ALL Segments** or generate them one by one.
    - Once all segments are generated, click **➕ Merge Segments** to create the final audio file.
    - Save the final output as a `.wav` file.
+
+<audio src="assets/sample.mp3" controls></audio>
 
 ## 🔐 Security Note
 

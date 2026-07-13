@@ -2371,14 +2371,19 @@ class TTS_App(QMainWindow):
         print(f"[INFO] Voice preview cache not found. Generating preview for: {voice_name}...")
         self.status_bar.showMessage("Generating voice preview: {0}...".format(voice_name))
 
-        # Dynamic text based on language
-        preview_text = "Hello, this is a preview of my voice. I am ready to read your text."
-
         selected_model_display_name = self.gemini_model_combo.currentText()
         selected_model = GEMINI_TTS_MODELS.get(selected_model_display_name, list(GEMINI_TTS_MODELS.values())[0])
         language_display_name = self.language_combo.currentText()
         language_code = SUPPORTED_LANGUAGES.get(language_display_name, "en-US")
         speaking_rate = self.speed_slider.value() / 100.0
+
+        # Dynamic text based on language
+        if language_code.startswith("sk"):
+            preview_text = "Toto je ukážka zvoleného hlasu."
+        elif language_code.startswith("cs"):
+            preview_text = "Tohle je ukázka zvoleného hlasu."
+        else:
+            preview_text = "This is a preview of the requested voice."
 
         params = {
             "text": preview_text,
