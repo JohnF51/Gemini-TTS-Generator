@@ -1,0 +1,33 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# IDE and Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Application specific files
+settings.json
+project/
+temp/
+outputs/
+zaloha/
+
+# Exclude generated audio files but keep the voice preview directory
+*.wav
+!voices/*.wav
+
+# OS specific files
+.DS_Store
+Thumbs.db
