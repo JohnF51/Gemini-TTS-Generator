@@ -17,6 +17,7 @@ venv.bak/
 /build
 /dist
 /Gemini_TTS_Generator.egg-info
+nobreak
 *.swp
 *.swo
 
