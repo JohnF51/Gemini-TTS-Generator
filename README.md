@@ -2,7 +2,7 @@
 
 A powerful, PyQt6-based desktop application that leverages Google's Gemini 3.1 API (multimodal audio generation) to perform high-quality, long-form Text-to-Speech (TTS). It includes advanced features like intelligent text segmentation, multithreaded generation, a granular audio segment editor, and a built-in token/cost calculator.
 
-https://github.com/user-attachments/assets/9015693d-af5f-421f-a8b1-c294eab40524
+https://github.com/user-attachments/assets/4ec637d2-5a84-4158-bb2a-051d078cfcf7
 
 ## 🌟 Key Features
 
