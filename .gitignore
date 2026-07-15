@@ -39,4 +39,5 @@ Thumbs.db
 # Local scripts and shortcuts
 start.bat
 auto_push.bat
+build_msi.bat
 *.lnk
