@@ -17,7 +17,6 @@ https://github.com/user-attachments/assets/9015693d-af5f-421f-a8b1-c294eab40524
 - **Secure API Key Management:** Safely encrypts and stores your Gemini API Key locally using Windows DPAPI, ensuring it is never saved in plain text.
 - **Token & Cost Calculator:** Tracks actual input/output token usage from the Gemini API and dynamically calculates your estimated generation cost based on user-defined pricing rates.
 - **Project Management:** Save your work as `.json` project files and load them later to resume your editing.
-- **Multilingual UI:** Switch the application interface between English, Slovak, and Czech on the fly.
 
 ![Segments Editor](assets/002.png)
 ![Segments Editor](assets/003.png)
@@ -26,7 +25,7 @@ https://github.com/user-attachments/assets/9015693d-af5f-421f-a8b1-c294eab40524
 
 - **OS:** Windows 10/11 (Required for the native DPAPI encryption of the API key).
 - **Python:** Python 3.9 or higher.
-- **API Key:** A valid Google Gemini API key with access to the multimodal audio generation endpoints.
+- **API Key:** A valid Google Gemini API key (pro or free tier) with access to the multimodal audio generation endpoints.
 
 ## 📦 Installation
 

@@ -30,7 +30,11 @@ except ImportError:
 from threading import Thread
 
 # --- NEW: Define application root and subdirectories ---
-APP_ROOT = os.path.dirname(os.path.abspath(__file__))
+if getattr(sys, 'frozen', False):
+    APP_ROOT = os.path.dirname(sys.executable)
+else:
+    APP_ROOT = os.path.dirname(os.path.abspath(__file__))
+
 PROJECTS_DIR = os.path.join(APP_ROOT, "project")
 TEMP_DIR = os.path.join(APP_ROOT, "temp")
 VOICES_DIR = os.path.join(APP_ROOT, "voices")

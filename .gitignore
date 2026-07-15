@@ -14,6 +14,9 @@ venv.bak/
 # IDE and Editor files
 .vscode/
 .idea/
+/build
+/dist
+/Gemini_TTS_Generator.egg-info
 *.swp
 *.swo
 
