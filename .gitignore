@@ -40,4 +40,5 @@ Thumbs.db
 start.bat
 auto_push.bat
 build_msi.bat
+convert_icon.py
 *.lnk
